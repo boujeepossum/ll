@@ -100,7 +100,7 @@ async fn deploy_phase(parent: &Task) -> Result<()> {
                     let t2 = t.clone();
                     let h = host.to_string();
                     handles.push(tokio::spawn(async move {
-                        t2.spawn(format!("host_{}", h), |t3| async move {
+                        t2.spawn(format!("host_{h}"), |t3| async move {
                             t3.data("region", h.clone());
                             t3.progress(0, 3);
                             tokio::time::sleep(sleep_ms(300, 800)).await;
@@ -141,7 +141,7 @@ async fn deploy_phase(parent: &Task) -> Result<()> {
             // rolling restart
             task.spawn("rolling_restart", |t| async move {
                 for shard in 0..6 {
-                    t.spawn(format!("shard_{}", shard), |s| async move {
+                    t.spawn(format!("shard_{shard}"), |s| async move {
                         s.progress(0, 2);
                         tokio::time::sleep(sleep_ms(200, 500)).await;
                         s.progress(1, 2);
@@ -182,7 +182,7 @@ async fn test_phase(parent: &Task) -> Result<()> {
                         "transform",
                     ];
                     for (i, module) in modules.iter().enumerate() {
-                        t.spawn_sync(format!("test_{}", module), |m| {
+                        t.spawn_sync(format!("test_{module}"), |m| {
                             std::thread::sleep(sleep_ms(50, 200));
                             m.data("assertions", rand::rng().random_range(3..40));
                             if *module == "optimizer" {
@@ -206,7 +206,7 @@ async fn test_phase(parent: &Task) -> Result<()> {
                         ];
                         for ep in endpoints {
                             api.spawn(
-                                format!("test_{}", ep.replace(' ', "_").replace('/', "_")),
+                                format!("test_{}", ep.replace([' ', '/'], "_")),
                                 |req| async move {
                                     req.data("endpoint", ep.to_string());
                                     tokio::time::sleep(sleep_ms(100, 500)).await;
@@ -238,7 +238,7 @@ async fn test_phase(parent: &Task) -> Result<()> {
 
                         db.spawn("queries", |q| async move {
                             for i in 0..5 {
-                                q.spawn(format!("query_{}", i), |qi| async move {
+                                q.spawn(format!("query_{i}"), |qi| async move {
                                     qi.data("rows_scanned", rand::rng().random_range(100..10000));
                                     tokio::time::sleep(sleep_ms(100, 400)).await;
                                     Ok(())
@@ -266,7 +266,7 @@ async fn test_phase(parent: &Task) -> Result<()> {
                             "settings_flow",
                         ];
                         for (i, s) in scenarios.iter().enumerate() {
-                            b.spawn(format!("{}", s), |sc| async move {
+                            b.spawn(s.to_string(), |sc| async move {
                                 let steps = rand::rng().random_range(4..10);
                                 for step in 0..=steps {
                                     sc.progress(step, steps);
@@ -342,7 +342,7 @@ async fn monitoring_phase(parent: &Task) -> Result<()> {
                 t_clone
                     .spawn("alert_watcher #l3", |aw| async move {
                         for i in 0..3 {
-                            aw.spawn(format!("check_alert_{}", i), |a| async move {
+                            aw.spawn(format!("check_alert_{i}"), |a| async move {
                                 tokio::time::sleep(sleep_ms(500, 1500)).await;
                                 a.data("triggered", false);
                                 Ok(())

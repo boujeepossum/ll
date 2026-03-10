@@ -109,7 +109,7 @@ async fn main() {
             Ok(())
         })
         .await
-        .map_err(|e| println!("{:?}", e))
+        .map_err(|e| println!("{e:?}"))
         .ok();
 
     drop(root_task);
