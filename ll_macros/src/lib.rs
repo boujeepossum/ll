@@ -18,6 +18,7 @@ enum SpawnKind {
 struct TaskAttr {
     kind: SpawnKind,
     data_args: Vec<Ident>,
+    tag_args: Vec<Ident>,
     name_override: Option<String>,
 }
 
@@ -25,12 +26,14 @@ impl TaskAttr {
     fn parse(attr: TokenStream) -> syn::Result<Self> {
         let mut kind = SpawnKind::Async;
         let mut data_args = Vec::new();
+        let mut tag_args = Vec::new();
         let mut name_override = None;
 
         if attr.is_empty() {
             return Ok(Self {
                 kind,
                 data_args,
+                tag_args,
                 name_override,
             });
         }
@@ -71,6 +74,13 @@ impl TaskAttr {
                     )?;
                     data_args = idents.into_iter().collect();
                 }
+                // #[task(tags(l2, nostatus))]
+                syn::Meta::List(list) if list.path.is_ident("tags") => {
+                    let idents = list.parse_args_with(
+                        syn::punctuated::Punctuated::<Ident, syn::Token![,]>::parse_terminated,
+                    )?;
+                    tag_args = idents.into_iter().collect();
+                }
                 // #[task(name = "custom_name")]
                 syn::Meta::NameValue(nv) if nv.path.is_ident("name") => {
                     if let syn::Expr::Lit(syn::ExprLit {
@@ -90,7 +100,7 @@ impl TaskAttr {
                     return Err(syn::Error::new_spanned(
                         &meta,
                         "unexpected attribute, expected `sync`, `tokio`, `blocking`, \
-                         `data(...)`, or `name = \"...\"`",
+                         `data(...)`, `tags(...)`, or `name = \"...\"`",
                     ));
                 }
             }
@@ -99,6 +109,7 @@ impl TaskAttr {
         Ok(Self {
             kind,
             data_args,
+            tag_args,
             name_override,
         })
     }
@@ -172,11 +183,15 @@ fn find_task_param(sig: &syn::Signature) -> syn::Result<&Ident> {
 ///   of the task body. Only listed arguments are logged; the task parameter
 ///   itself cannot be listed.
 ///
-/// - **`name = "custom_name"`** — override the task name (defaults to the
-///   function name). Useful when the name contains tags like `#l2` or
-///   `#nostatus`.
+/// - **`tags(l2, nostatus, ...)`** — append `#`-tags to the task name. Tags
+///   control reporter visibility: `#l2`/`#l3` mute at lower log levels,
+///   `#nostatus` hides from the terminal status display, `#dontprint`
+///   suppresses text output entirely.
 ///
-/// Attributes can be combined: `#[task(sync, data(path), name = "check #l2")]`.
+/// - **`name = "custom_name"`** — override the task name (defaults to the
+///   function name). Can be combined with `tags(...)`.
+///
+/// Attributes can be combined: `#[task(sync, data(path), tags(l2))]`.
 ///
 /// # Examples
 ///
@@ -204,12 +219,12 @@ fn find_task_param(sig: &syn::Signature) -> syn::Result<&Ident> {
 /// }
 /// ```
 ///
-/// Custom task name with tags:
+/// Muting with tags:
 ///
 /// ```ignore
-/// #[task(name = "test #l2")]
-/// async fn run_tests(task: &Task) -> Result<()> {
-///     // creates a task named "test" with tag "l2"
+/// #[task(tags(l2))]
+/// async fn verbose_step(task: &Task) -> Result<()> {
+///     // task name: "verbose_step #l2" — only shown at log level L2+
 ///     Ok(())
 /// }
 /// ```
@@ -308,10 +323,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Task name: override or function name
-    let task_name = task_attr
+    // Task name: override or function name, with optional tags appended
+    let mut task_name = task_attr
         .name_override
         .unwrap_or_else(|| func.sig.ident.to_string());
+    for tag in &task_attr.tag_args {
+        task_name.push_str(&format!(" #{tag}"));
+    }
 
     // Generate data logging statements
     let data_stmts: Vec<_> = task_attr
