@@ -12,35 +12,23 @@ env:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-
     strategy:
       matrix:
-        os: [ubuntu-latest, macOS-latest]
-        rust:
-          - stable
-          - beta
-          - nightly
-
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, beta, nightly]
     steps:
-      - uses: actions/checkout@v2
-
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
+      - run: cargo test --verbose
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
           components: rustfmt, clippy
-
-      - uses: actions-rs/cargo@v1
-      - name: Run tests
-        run: cargo test --verbose
-
-      - uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -- -D warnings
