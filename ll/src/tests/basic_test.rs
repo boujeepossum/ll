@@ -318,7 +318,6 @@ async fn error_chain_test_error_formatter() -> Result<()> {
     impl ErrorFormatter for CustomFormatter {
         fn format_error(&self, err: &anyhow::Error) -> String {
             err.chain()
-                .into_iter()
                 .rev()
                 .enumerate()
                 .map(|(i, e)| format!("{} --> {}", i, e.to_string().trim()))

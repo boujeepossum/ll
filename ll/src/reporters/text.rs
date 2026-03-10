@@ -63,14 +63,14 @@ impl StdioReporter {
             );
 
             if self.use_stdout {
-                println!("{}", result);
+                println!("{result}");
             } else if super::term_status::is_active() {
                 // Buffer the line instead of writing to stderr directly.
                 // The term_status render loop will drain these and write
                 // them above the status frame on the next tick.
                 super::term_status::buffer_line(result);
             } else {
-                eprintln!("{}", result);
+                eprintln!("{result}");
             }
         }
     }
@@ -183,10 +183,10 @@ pub fn make_string(
     };
 
     if !data.is_empty() && task_internal.hide_errors.is_some() {
-        data = format!("{}\n", data);
+        data = format!("{data}\n");
     }
 
-    let result = format!("{}{}{}{}{}", timestamp, status, name, data, error);
+    let result = format!("{timestamp}{status}{name}{data}{error}");
 
     result
 }
@@ -215,7 +215,7 @@ fn format_timestamp(
                 let datetime: DateTime<Local> = datetime.into();
                 let rounded = datetime.round_subsecs(0);
                 let formatted = rounded.format("%I:%M:%S%p");
-                format!("[{}] ", formatted).dimmed().to_string()
+                format!("[{formatted}] ").dimmed().to_string()
             } else {
                 "[          ]".to_string()
             }
@@ -223,7 +223,7 @@ fn format_timestamp(
         TimestampFormat::UTC => {
             if let Some(datetime) = datetime {
                 let rounded = datetime.round_subsecs(0);
-                format!("[{:?}] ", rounded).dimmed().to_string()
+                format!("[{rounded:?}] ").dimmed().to_string()
             } else {
                 "[                    ]".to_string()
             }
@@ -277,7 +277,7 @@ fn format_data(task_internal: &TaskInternal) -> String {
             continue;
         }
 
-        data.push(format!("  |      {}: {}", k, entry.0).dimmed().to_string());
+        data.push(format!("  |      {k}: {}", entry.0).dimmed().to_string());
     }
 
     if !data.is_empty() {
@@ -296,7 +296,7 @@ fn format_error(task_internal: &TaskInternal) -> String {
         result.push_str("\n  |\n");
         let error_log = error_msg
             .split('\n')
-            .map(|line| format!("  |  {}", line))
+            .map(|line| format!("  |  {line}"))
             .collect::<Vec<String>>()
             .join("\n");
         result.push_str(&error_log);

@@ -67,9 +67,9 @@ impl std::fmt::Display for Data {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut result = String::new();
         for (k, v) in &self.map {
-            result.push_str(&format!("  {}: {}\n", k, v.0));
+            result.push_str(&format!("  {k}: {}\n", v.0));
         }
-        write!(f, "{}", result)
+        write!(f, "{result}")
     }
 }
 
@@ -77,11 +77,11 @@ impl std::fmt::Display for DataValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let result = match self {
             DataValue::String(string) => string.to_owned(),
-            DataValue::Int(i) => format!("{}", i),
-            DataValue::Float(f) => format!("{}", f),
+            DataValue::Int(i) => format!("{i}"),
+            DataValue::Float(f) => format!("{f}"),
             DataValue::None => String::new(),
         };
-        write!(f, "{}", result)
+        write!(f, "{result}")
     }
 }
 
@@ -108,7 +108,7 @@ impl From<String> for DataValue {
 
 impl From<bool> for DataValue {
     fn from(v: bool) -> Self {
-        DataValue::String(format!("{}", v))
+        DataValue::String(format!("{v}"))
     }
 }
 

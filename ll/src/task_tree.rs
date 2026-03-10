@@ -153,11 +153,11 @@ impl TaskTree {
                 desc.push_str(&format!(" {}", task_internal.name));
                 if task_internal.attach_transitive_data_to_errors {
                     for (k, v) in task_internal.all_data() {
-                        desc.push_str(&format!("\n  {}: {}", k, v.0));
+                        desc.push_str(&format!("\n  {k}: {}", v.0));
                     }
                 } else {
                     for (k, v) in &task_internal.data.map {
-                        desc.push_str(&format!("\n  {}: {}", k, v.0));
+                        desc.push_str(&format!("\n  {k}: {}", v.0));
                     }
                 };
                 if !desc.is_empty() {
@@ -174,7 +174,7 @@ impl TaskTree {
             if let Some(formatter) = formatter {
                 Some(formatter.format_error(err))
             } else {
-                Some(format!("{:?}", err))
+                Some(format!("{err:?}"))
             }
         } else {
             None
@@ -239,7 +239,7 @@ impl TaskTree {
         {
             Ok(result) => result,
             Err(join_err) => {
-                let msg = format!("spawned task panicked: {}", join_err);
+                let msg = format!("spawned task panicked: {join_err}");
                 self.mark_done(id, Some(msg.clone()));
                 self.maybe_force_flush();
                 Err(anyhow::anyhow!(msg))
@@ -268,7 +268,7 @@ impl TaskTree {
         {
             Ok(result) => result,
             Err(join_err) => {
-                let msg = format!("blocking task panicked: {}", join_err);
+                let msg = format!("blocking task panicked: {join_err}");
                 self.mark_done(id, Some(msg.clone()));
                 self.maybe_force_flush();
                 Err(anyhow::anyhow!(msg))
@@ -295,11 +295,11 @@ impl TaskTree {
 
             tree.parent_to_children
                 .entry(parent_id)
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(id);
             tree.child_to_parents
                 .entry(id)
-                .or_insert_with(BTreeSet::new)
+                .or_default()
                 .insert(parent_id);
         } else {
             tree.root_tasks.insert(id);
@@ -491,7 +491,7 @@ impl TaskTreeInternal {
             for id in tasks_to_finished_status.keys().copied() {
                 self.tasks_marked_for_deletion
                     .entry(id)
-                    .or_insert_with(SystemTime::now);
+                    .or_insert_with(SystemTime::now); // can't use or_default, need current time
             }
 
             // This sub branch might have been holding other parent branches that
@@ -584,8 +584,8 @@ impl TaskInternal {
     pub fn all_data(
         &self,
     ) -> std::iter::Chain<
-        std::collections::btree_map::Iter<String, DataEntry>,
-        std::collections::btree_map::Iter<String, DataEntry>,
+        std::collections::btree_map::Iter<'_, String, DataEntry>,
+        std::collections::btree_map::Iter<'_, String, DataEntry>,
     > {
         self.data.map.iter().chain(self.data_transitive.map.iter())
     }

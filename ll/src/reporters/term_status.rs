@@ -117,7 +117,7 @@ impl TermStatus {
 
         // Flush any remaining buffered lines now that the frame is gone.
         for line in drain_buffer() {
-            writeln!(stderr_lock, "{}", line).ok();
+            writeln!(stderr_lock, "{line}").ok();
         }
     }
 }
@@ -253,8 +253,7 @@ impl TermStatusInternal {
 
             let last_visible_child = children_iter
                 .clone()
-                .filter(|id| tree.get_task(**id).map_or(false, |t| self.should_print(t)))
-                .last();
+                .rfind(|id| tree.get_task(**id).is_ok_and(|t| self.should_print(t)));
 
             // we still need to DFS the ones that we don't print to make sure
             // we're not skipping their children
@@ -284,7 +283,7 @@ impl TermStatusInternal {
         if rows.len() > max_height {
             let trimmed = rows.len() - max_height;
             rows = rows.into_iter().take(max_height).collect();
-            rows.push(format!(".......{} more tasks.......", trimmed))
+            rows.push(format!(".......{trimmed} more tasks......."))
         }
 
         // Separator between scrolling log output and the live status tree.
@@ -325,7 +324,7 @@ impl TermStatusInternal {
 
         let spinner_ch = SPINNER[self.spin_frame % SPINNER.len()];
         let status = match task_internal.status {
-            TaskStatus::Running => format!("{}", spinner_ch).yellow(),
+            TaskStatus::Running => format!("{spinner_ch}").yellow(),
             TaskStatus::Finished(TaskResult::Success, _) => "✔".green(),
             TaskStatus::Finished(TaskResult::Failure(_), _) => "✖".red(),
         };
@@ -341,7 +340,7 @@ impl TermStatusInternal {
 
         let secs = duration.as_secs();
         let millis = (duration.as_millis() % 1000) / 100;
-        let ts = format!("{}.{}s", secs, millis).dimmed();
+        let ts = format!("{secs}.{millis}s").dimmed();
 
         Ok(format!(
             "{}{} {} {}{}",
