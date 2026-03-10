@@ -592,7 +592,10 @@ async fn macro_tags_do_not_propagate_to_children() -> Result<()> {
         .find(|t| t.name == "untagged_child")
         .expect("untagged_child must exist");
     assert!(parent.tags.contains("l2"), "parent should have l2 tag");
-    assert!(!child.tags.contains("l2"), "child should NOT inherit l2 tag");
+    assert!(
+        !child.tags.contains("l2"),
+        "child should NOT inherit l2 tag"
+    );
     Ok(())
 }
 
