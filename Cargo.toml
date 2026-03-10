@@ -3,5 +3,6 @@ resolver = "2"
 
 members = [
     "ll",
+    "ll_macros",
     "ll_test_cli",
 ]
