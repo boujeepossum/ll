@@ -2,4 +2,5 @@
 
 members = [
     "ll",
+    "ll_test_cli",
 ]

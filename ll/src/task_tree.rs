@@ -217,6 +217,65 @@ impl TaskTree {
         self.post_spawn(id, result)
     }
 
+    pub(crate) async fn spawn_tokio<F, FT, T>(
+        self: &Arc<Self>,
+        name: String,
+        f: F,
+        parent: Option<UniqID>,
+    ) -> Result<T>
+    where
+        F: FnOnce(Task) -> FT + Send + 'static,
+        FT: Future<Output = Result<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        let task = self.pre_spawn(name, parent);
+        let id = task.0.id;
+        let tree = self.clone();
+        match tokio::spawn(async move {
+            let result = f(task).await;
+            tree.post_spawn(id, result)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(join_err) => {
+                let msg = format!("spawned task panicked: {}", join_err);
+                self.mark_done(id, Some(msg.clone()));
+                self.maybe_force_flush();
+                Err(anyhow::anyhow!(msg))
+            }
+        }
+    }
+
+    pub(crate) async fn spawn_blocking<F, T>(
+        self: &Arc<Self>,
+        name: String,
+        f: F,
+        parent: Option<UniqID>,
+    ) -> Result<T>
+    where
+        F: FnOnce(Task) -> Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let task = self.pre_spawn(name, parent);
+        let id = task.0.id;
+        let tree = self.clone();
+        match tokio::task::spawn_blocking(move || {
+            let result = f(task);
+            tree.post_spawn(id, result)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(join_err) => {
+                let msg = format!("blocking task panicked: {}", join_err);
+                self.mark_done(id, Some(msg.clone()));
+                self.maybe_force_flush();
+                Err(anyhow::anyhow!(msg))
+            }
+        }
+    }
+
     pub fn create_task_internal<S: Into<String>>(
         self: &Arc<Self>,
         name: S,
