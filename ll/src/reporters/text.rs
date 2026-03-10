@@ -64,6 +64,11 @@ impl StdioReporter {
 
             if self.use_stdout {
                 println!("{}", result);
+            } else if super::term_status::is_active() {
+                // Buffer the line instead of writing to stderr directly.
+                // The term_status render loop will drain these and write
+                // them above the status frame on the next tick.
+                super::term_status::buffer_line(result);
             } else {
                 eprintln!("{}", result);
             }

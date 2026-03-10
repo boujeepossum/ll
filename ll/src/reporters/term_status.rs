@@ -5,13 +5,37 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use crossterm::{cursor, style, terminal};
 use std::io::Write;
-use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
 const NOSTATUS_TAG: &str = "nostatus";
 
+/// When true, `StdioReporter` should push lines to `LOG_BUFFER` instead
+/// of writing directly to stderr.  The render loop drains the buffer
+/// and writes those lines itself, so nothing else touches stderr while
+/// the status frame is on screen.
+static TERM_STATUS_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 lazy_static::lazy_static! {
     pub static ref TERM_STATUS: TermStatus = TermStatus::new(TASK_TREE.clone());
+    static ref LOG_BUFFER: Mutex<Vec<String>> = Mutex::new(Vec::new());
+}
+
+/// Returns true when the live status tree is being rendered.
+/// Used by `StdioReporter` to decide whether to buffer output.
+pub fn is_active() -> bool {
+    TERM_STATUS_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Push a formatted log line into the buffer.  The render loop will
+/// drain these and write them to stderr before the next frame.
+pub fn buffer_line(line: String) {
+    LOG_BUFFER.lock().unwrap().push(line);
+}
+
+/// Drain all buffered log lines.
+fn drain_buffer() -> Vec<String> {
+    std::mem::take(&mut *LOG_BUFFER.lock().unwrap())
 }
 
 pub fn show() {
@@ -41,42 +65,33 @@ impl TermStatus {
         } else {
             lock.enabled = true;
         }
+        TERM_STATUS_ACTIVE.store(true, Ordering::Relaxed);
         drop(lock);
 
         let t = self.clone();
         std::thread::spawn(move || {
             loop {
-                // This is dumb, but it lets regular `println!` macros and such
-                // time to acquire a global mutex to print whatever they want to
-                // print. Without it this fuction will release and acquire the
-                // lock right away without letting anything print at all.
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                // Sleep OUTSIDE the stdio lock.  Log lines produced
+                // during this window go into LOG_BUFFER (non-blocking
+                // push to a Vec), so nothing writes to stderr directly.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+
                 let stdout = std::io::stdout();
                 let stderr = std::io::stderr();
 
-                // Get both locks for stdout and stderr so nothing can print to
-                // it while the status tree is displayed. If something prints
-                // while the tree si there everything will get messed up, output
-                // will be lost and parts of tree will end up as random noise.
+                // Lock stdio briefly — just long enough to clear the
+                // old frame, flush buffered log lines, and draw the
+                // new frame.  Total hold time is the write itself
+                // (microseconds), not the display duration.
                 let stdout_lock = stdout.lock();
                 let mut stderr_lock = stderr.lock();
 
                 let mut internal = t.0.write().unwrap();
-                if internal.enabled {
-                    internal.print(&mut stderr_lock).ok();
-                } else {
+                if !internal.enabled {
                     break;
                 }
-                // STDIO is locked the whole time.
-                // WARN: If there a heavy IO
-                // happening this will obviously slow things down quite a bit.
-                std::thread::sleep(std::time::Duration::from_millis(50));
 
-                if internal.enabled {
-                    internal.clear(&mut stderr_lock).ok();
-                } else {
-                    break;
-                }
+                internal.render_frame(&mut stderr_lock).ok();
 
                 drop(stdout_lock);
                 drop(stderr_lock);
@@ -85,7 +100,24 @@ impl TermStatus {
     }
 
     pub fn hide(&self) {
-        self.0.write().unwrap().enabled = false;
+        let mut internal = self.0.write().unwrap();
+        internal.enabled = false;
+
+        let stderr = std::io::stderr();
+        let mut stderr_lock = stderr.lock();
+
+        // Set ACTIVE to false only after holding the stderr lock.
+        // Otherwise a StdioReporter could see is_active()==false,
+        // eprintln! a line while the frame is still on screen, and
+        // then clear_frame() would wipe that line along with the frame.
+        TERM_STATUS_ACTIVE.store(false, Ordering::Relaxed);
+
+        internal.clear_frame(&mut stderr_lock).ok();
+
+        // Flush any remaining buffered lines now that the frame is gone.
+        for line in drain_buffer() {
+            writeln!(stderr_lock, "{}", line).ok();
+        }
     }
 }
 
@@ -120,21 +152,78 @@ impl TermStatusInternal {
         }
     }
 
-    fn print(&mut self, stdio: &mut impl Write) -> Result<()> {
+    /// One render tick:
+    ///   1. Erase the previous status frame
+    ///   2. Write buffered log lines (they scroll into history)
+    ///   3. Draw the new status frame
+    ///
+    /// Everything is queued into a single `Vec<u8>` buffer and written
+    /// with one `write_all` + `flush`.  Wrapped in synchronized-output
+    /// markers so the terminal paints it atomically — no flicker.
+    fn render_frame(&mut self, w: &mut impl Write) -> Result<()> {
         let rows = self.make_status_rows()?;
+        let buffered_lines = drain_buffer();
+        let new_height = rows.len();
 
-        let height = rows.len();
-
-        if let (0, 0) = (height, self.current_height) {
+        // Nothing to draw and nothing to clear — skip entirely.
+        if new_height == 0 && self.current_height == 0 && buffered_lines.is_empty() {
             return Ok(());
         }
 
-        self.current_height = height;
+        // Previous frame on screen but nothing new to draw — just clear it
+        // and flush any buffered lines.  Don't leave a stale frame lingering.
+        if new_height == 0 && buffered_lines.is_empty() && self.current_height > 0 {
+            self.clear_frame(w)?;
+            return Ok(());
+        }
 
-        crossterm::execute!(stdio, style::Print("\n")).ok();
-        crossterm::execute!(stdio, style::Print(rows.join("\n"))).ok();
-        crossterm::execute!(stdio, style::Print("\n")).ok();
+        let mut buf = Vec::with_capacity(4096);
 
+        crossterm::queue!(&mut buf, terminal::BeginSynchronizedUpdate)?;
+
+        // 1. Erase the previous frame.
+        if self.current_height > 0 {
+            crossterm::queue!(
+                &mut buf,
+                cursor::MoveUp((self.current_height + 1) as u16),
+                terminal::Clear(terminal::ClearType::FromCursorDown)
+            )?;
+        }
+
+        // 2. Flush buffered log lines — they appear above the frame
+        //    and scroll into normal terminal history.
+        for line in &buffered_lines {
+            crossterm::queue!(&mut buf, style::Print(line), style::Print("\n"))?;
+        }
+
+        // 3. Draw the new frame.
+        if !rows.is_empty() {
+            let frame = format!("\n{}\n", rows.join("\n"));
+            crossterm::queue!(&mut buf, style::Print(frame))?;
+        }
+
+        crossterm::queue!(&mut buf, terminal::EndSynchronizedUpdate)?;
+
+        w.write_all(&buf)?;
+        w.flush()?;
+
+        self.current_height = new_height;
+        Ok(())
+    }
+
+    /// Erase the current frame from the screen (used when hiding).
+    fn clear_frame(&mut self, w: &mut impl Write) -> Result<()> {
+        if self.current_height > 0 {
+            let mut buf = Vec::with_capacity(256);
+            crossterm::queue!(
+                &mut buf,
+                cursor::MoveUp((self.current_height + 1) as u16),
+                terminal::Clear(terminal::ClearType::FromCursorDown)
+            )?;
+            w.write_all(&buf)?;
+            w.flush()?;
+            self.current_height = 0;
+        }
         Ok(())
     }
 
@@ -259,17 +348,6 @@ impl TermStatusInternal {
             "{}{}{}{}{}",
             indent, status, ts, progress, task_internal.name
         ))
-    }
-
-    fn clear(&self, stdio: &mut impl Write) -> Result<()> {
-        if self.current_height != 0 {
-            for _ in 0..(self.current_height + 1) {
-                crossterm::execute!(stdio, terminal::Clear(terminal::ClearType::CurrentLine)).ok();
-                crossterm::execute!(stdio, cursor::MoveUp(1)).ok();
-            }
-        }
-
-        Ok(())
     }
 }
 
