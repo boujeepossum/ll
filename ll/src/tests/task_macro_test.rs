@@ -39,6 +39,46 @@ fn step_three(t: Task) -> Result<()> {
     Ok(())
 }
 
+// --- tags(...) attribute ---
+#[task(tags(l2))]
+async fn verbose_step(task: &Task) -> Result<()> {
+    task.data("detail", "noisy");
+    Ok(())
+}
+
+// --- tags + name override ---
+#[task(name = "check", tags(l3, nostatus))]
+async fn run_checks(task: &Task) -> Result<()> {
+    task.data("result", "pass");
+    Ok(())
+}
+
+// --- tags + sync ---
+#[task(sync, tags(l3))]
+fn quiet_sync_step(task: &Task) -> Result<()> {
+    task.data("mode", "quiet");
+    Ok(())
+}
+
+// --- tags + data ---
+#[task(tags(l2), data(env))]
+async fn tagged_with_data(env: &str, task: &Task) -> Result<()> {
+    Ok(())
+}
+
+// --- nested: parent tagged, child untagged ---
+#[task(tags(l2))]
+async fn tagged_parent(task: &Task) -> Result<()> {
+    untagged_child(&task).await?;
+    Ok(())
+}
+
+#[task]
+async fn untagged_child(task: &Task) -> Result<()> {
+    task.data("child", true);
+    Ok(())
+}
+
 #[task]
 async fn build(task: &Task) -> Result<()> {
     task.data("compiler", "rustc");
@@ -394,5 +434,194 @@ async fn macro_owned_task() -> Result<()> {
 
 "
     );
+    Ok(())
+}
+
+/// tags(...) appends hashtag tags to the task name.
+/// Verifies that (a) the display name strips the tag and (b) the tag
+/// is actually stored on the TaskInternal for reporter filtering.
+#[tokio::test]
+async fn macro_tags() -> Result<()> {
+    let (tt, s) = setup();
+    let root = tt.create_task("root");
+    verbose_step(&root).await?;
+    sleep().await;
+
+    snapshot!(
+        s.to_string(),
+        "
+[ ] | STARTING | root
+[ ] | STARTING | root:verbose_step
+[ ] root:verbose_step
+  |      detail: noisy
+
+"
+    );
+
+    // Verify the tag is actually stored on the task
+    let tree = tt.tree_internal.read().unwrap();
+    let child = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "verbose_step")
+        .expect("verbose_step task must exist");
+    assert!(child.tags.contains("l2"), "tag 'l2' must be set");
+    Ok(())
+}
+
+/// tags(...) combined with name override: both name and tags apply.
+#[tokio::test]
+async fn macro_tags_with_name_override() -> Result<()> {
+    let (tt, s) = setup();
+    let root = tt.create_task("root");
+    run_checks(&root).await?;
+    sleep().await;
+
+    snapshot!(
+        s.to_string(),
+        "
+[ ] | STARTING | root
+[ ] | STARTING | root:check
+[ ] root:check
+  |      result: pass
+
+"
+    );
+
+    // Verify both tags are stored
+    let tree = tt.tree_internal.read().unwrap();
+    let child = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "check")
+        .expect("check task must exist");
+    assert!(child.tags.contains("l3"));
+    assert!(child.tags.contains("nostatus"));
+    Ok(())
+}
+
+/// tags(...) with sync spawn.
+#[tokio::test]
+async fn macro_tags_sync() -> Result<()> {
+    let (tt, s) = setup();
+    let root = tt.create_task("root");
+    quiet_sync_step(&root)?;
+    sleep().await;
+
+    snapshot!(
+        s.to_string(),
+        "
+[ ] | STARTING | root
+[ ] | STARTING | root:quiet_sync_step
+[ ] root:quiet_sync_step
+  |      mode: quiet
+
+"
+    );
+
+    let tree = tt.tree_internal.read().unwrap();
+    let child = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "quiet_sync_step")
+        .expect("quiet_sync_step task must exist");
+    assert!(child.tags.contains("l3"));
+    Ok(())
+}
+
+/// tags(...) combined with data(...): both work together.
+#[tokio::test]
+async fn macro_tags_with_data() -> Result<()> {
+    let (tt, s) = setup();
+    let root = tt.create_task("root");
+    tagged_with_data("prod", &root).await?;
+    sleep().await;
+
+    snapshot!(
+        s.to_string(),
+        "
+[ ] | STARTING | root
+[ ] | STARTING | root:tagged_with_data
+[ ] root:tagged_with_data
+  |      env: prod
+
+"
+    );
+
+    let tree = tt.tree_internal.read().unwrap();
+    let child = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "tagged_with_data")
+        .expect("tagged_with_data task must exist");
+    assert!(child.tags.contains("l2"));
+    Ok(())
+}
+
+/// Nested tasks: parent has tags, child does not. Tags should NOT
+/// propagate to children — only the parent task has the tag.
+#[tokio::test]
+async fn macro_tags_do_not_propagate_to_children() -> Result<()> {
+    let (tt, s) = setup();
+    let root = tt.create_task("root");
+    tagged_parent(&root).await?;
+    sleep().await;
+
+    snapshot!(
+        s.to_string(),
+        "
+[ ] | STARTING | root
+[ ] | STARTING | root:tagged_parent
+[ ] | STARTING | root:tagged_parent:untagged_child
+[ ] root:tagged_parent:untagged_child
+  |      child: true
+[ ] root:tagged_parent
+
+"
+    );
+
+    let tree = tt.tree_internal.read().unwrap();
+    let parent = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "tagged_parent")
+        .expect("tagged_parent must exist");
+    let child = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "untagged_child")
+        .expect("untagged_child must exist");
+    assert!(parent.tags.contains("l2"), "parent should have l2 tag");
+    assert!(!child.tags.contains("l2"), "child should NOT inherit l2 tag");
+    Ok(())
+}
+
+/// Verify tags(l2) produces the same result as name = "fn_name #l2".
+/// This ensures tags(...) is equivalent to manually embedding tags in the name.
+#[tokio::test]
+async fn macro_tags_equivalent_to_name_with_hashtag() -> Result<()> {
+    let (tt, _s) = setup();
+    let root = tt.create_task("root");
+
+    // verbose_step uses tags(l2)
+    verbose_step(&root).await?;
+    // run_tests uses name = "test #l2"
+    run_tests(&root).await?;
+
+    let tree = tt.tree_internal.read().unwrap();
+    let via_tags = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "verbose_step")
+        .unwrap();
+    let via_name = tree
+        .tasks_internal
+        .values()
+        .find(|t| t.name == "test")
+        .unwrap();
+
+    // Both should have the "l2" tag
+    assert!(via_tags.tags.contains("l2"));
+    assert!(via_name.tags.contains("l2"));
     Ok(())
 }

@@ -32,7 +32,7 @@ pub struct TaskTree {
 }
 
 pub(crate) struct TaskTreeInternal {
-    tasks_internal: BTreeMap<UniqID, TaskInternal>,
+    pub(crate) tasks_internal: BTreeMap<UniqID, TaskInternal>,
     parent_to_children: BTreeMap<UniqID, BTreeSet<UniqID>>,
     child_to_parents: BTreeMap<UniqID, BTreeSet<UniqID>>,
     root_tasks: BTreeSet<UniqID>,

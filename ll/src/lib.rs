@@ -9,6 +9,14 @@ terminal status).
 Tasks form a tree: every task can spawn children, and reporters see the full
 parent-child structure.
 
+- [Quick start](#quick-start)
+- [The `#[task]` macro](#the-task-macro)
+  - [Spawn variants](#spawn-variants)
+  - [Optional attributes](#optional-attributes) — `data(...)`, `tags(...)`, `name = "..."`
+  - [Examples](#examples)
+- [Manual spawning](#manual-spawning)
+- [Tags](#tags) — `#l0`–`#l3`, `#nostatus`, `#dontprint`
+
 ## Quick start
 
 ```ignore
@@ -55,10 +63,13 @@ child task.
 
 - **`data(arg1, arg2, ...)`** — auto-emit `task.data("arg", arg)` for the
   listed function parameters.
+- **`tags(l2, nostatus, ...)`** — append `#`-tags to the task name. Tags
+  control reporter visibility: `#l2`/`#l3` mute at lower log levels,
+  `#nostatus` hides from the terminal status display.
 - **`name = "custom"`** — override the task name (defaults to the function
-  name). Useful for names with `#tags`.
+  name). Can be combined with `tags(...)`.
 
-Attributes combine freely: `#[task(sync, data(path), name = "check #l2")]`.
+Attributes combine freely: `#[task(sync, data(path), tags(l2))]`.
 
 ### Examples
 
@@ -82,6 +93,16 @@ Sync task with automatic data logging:
 fn read_config(path: &str, task: &Task) -> Result<Config> {
     // task.data("path", path) is emitted automatically
     Ok(toml::from_str(&std::fs::read_to_string(path)?)?)
+}
+```
+
+Muting verbose tasks with tags:
+
+```ignore
+#[task(tags(l2))]
+async fn verbose_step(task: &Task) -> Result<()> {
+    // only shown when reporter log level is L2 or higher
+    Ok(())
 }
 ```
 
@@ -109,6 +130,27 @@ root.spawn("subtask", |task| async move {
     Ok(())
 }).await?;
 ```
+
+## Tags
+
+Tags are metadata encoded inline in task names via `#` syntax. They control
+reporter visibility and filtering.
+
+| Tag | Effect |
+|---|---|
+| `#l0` | Reporter level L0 — highest priority, always shown |
+| `#l1` | Reporter level L1 — default |
+| `#l2` | Reporter level L2 — hidden unless reporter threshold is L2+ |
+| `#l3` | Reporter level L3 — lowest priority, most filtered |
+| `#nostatus` | Hidden from [`TermStatus`] live display (still in text logs) |
+| `#dontprint` | Suppressed from all text reporters |
+
+Tags can be set via the [`macro@task`] attribute (`tags(l2, nostatus)`) or
+embedded directly in task names (`"download #l3"`). Unrecognized tags are
+stored but have no built-in effect.
+
+Data keys also support tags: `task.data("response_body #trace", val)` marks
+the entry as trace-level, hiding it unless the data log level is set to Trace.
  */
 #![allow(clippy::new_without_default)]
 
