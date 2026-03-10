@@ -1,13 +1,11 @@
 [package]
 name = "ll"
-version = "7.1.0"
+version = "7.2.0"
 edition = "2018"
-authors = ["Aaron Abramov <aaron@abramov.io>"]
+authors = ["Aaron Abrams <aaron@abrams.cc>"]
 description = "rust logging library"
 license = "MIT"
-repository = "https://github.com/aaronabramov/ll"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/boujeepossum/ll"
 
 [dependencies]
 anyhow = "1"
