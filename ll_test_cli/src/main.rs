@@ -172,8 +172,14 @@ async fn test_phase(parent: &Task) -> Result<()> {
                 // unit tests — many small sync tasks
                 task.spawn("unit_tests", |t| async move {
                     let modules = [
-                        "parser", "lexer", "codegen", "optimizer", "linker", "serde",
-                        "validator", "transform",
+                        "parser",
+                        "lexer",
+                        "codegen",
+                        "optimizer",
+                        "linker",
+                        "serde",
+                        "validator",
+                        "transform",
                     ];
                     for (i, module) in modules.iter().enumerate() {
                         t.spawn_sync(format!("test_{}", module), |m| {
@@ -191,10 +197,16 @@ async fn test_phase(parent: &Task) -> Result<()> {
                 // integration tests — async, deeper nesting
                 task.spawn("integration_tests", |t| async move {
                     t.spawn("api_tests", |api| async move {
-                        let endpoints = ["GET /users", "POST /users", "DELETE /users/{id}",
-                                         "PUT /settings", "GET /health"];
+                        let endpoints = [
+                            "GET /users",
+                            "POST /users",
+                            "DELETE /users/{id}",
+                            "PUT /settings",
+                            "GET /health",
+                        ];
                         for ep in endpoints {
-                            api.spawn(format!("test_{}", ep.replace(' ', "_").replace('/', "_")),
+                            api.spawn(
+                                format!("test_{}", ep.replace(' ', "_").replace('/', "_")),
                                 |req| async move {
                                     req.data("endpoint", ep.to_string());
                                     tokio::time::sleep(sleep_ms(100, 500)).await;
@@ -246,8 +258,13 @@ async fn test_phase(parent: &Task) -> Result<()> {
                 // e2e tests — long running, progress bars
                 task.spawn("e2e_tests #l3", |t| async move {
                     t.spawn("browser_tests", |b| async move {
-                        let scenarios = ["login_flow", "checkout_flow", "signup_flow",
-                                         "search_flow", "settings_flow"];
+                        let scenarios = [
+                            "login_flow",
+                            "checkout_flow",
+                            "signup_flow",
+                            "search_flow",
+                            "settings_flow",
+                        ];
                         for (i, s) in scenarios.iter().enumerate() {
                             b.spawn(format!("{}", s), |sc| async move {
                                 let steps = rand::rng().random_range(4..10);
