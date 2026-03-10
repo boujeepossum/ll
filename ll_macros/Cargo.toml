@@ -1,6 +1,6 @@
 [package]
 name = "ll_macros"
-version = "7.2.0"
+version = "8.0.0"
 edition = "2021"
 authors = ["Aaron Abrams <aaron@abrams.cc>"]
 description = "Proc macros for the ll logging library"
