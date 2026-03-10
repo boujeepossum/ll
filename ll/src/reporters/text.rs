@@ -99,10 +99,7 @@ impl Reporter for StdioReporter {
 }
 
 pub fn strip_ansi(s: &str) -> String {
-    String::from_utf8(
-        strip_ansi_escapes::strip(s).expect("Cant strip ANSI escape characters from a string"),
-    )
-    .expect("not a utf8 string")
+    String::from_utf8(strip_ansi_escapes::strip(s)).expect("not a utf8 string")
 }
 
 impl StringReporter {

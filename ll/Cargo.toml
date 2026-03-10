@@ -11,14 +11,12 @@ repository = "https://github.com/aaronabramov/ll"
 
 [dependencies]
 anyhow = "1"
-async-trait = "0.1"
 chrono = "0.4"
-colored = "1.9"
-crossterm = "0.28"
+colored = "3"
+crossterm = "0.29"
 lazy_static = "1"
-strip-ansi-escapes = "0.1"
-term_size = "0.3"
+strip-ansi-escapes = "0.2"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
-k9 = "0.11"
+k9 = "0.12"
