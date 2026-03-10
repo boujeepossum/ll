@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 const NOSTATUS_TAG: &str = "nostatus";
+const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// When true, `StdioReporter` should push lines to `LOG_BUFFER` instead
 /// of writing directly to stderr.  The render loop drains the buffer
@@ -125,12 +126,11 @@ impl TermStatus {
  Vec of indentations. Bool represents whether a vertical line needs to be
  at every point of the indentation, e.g.
 
-    [▶] Root Task
-    │
-    ├ [✓] Task 1
-    │  ╰ [▶] Task 3        <-- vec[true, true] has line
-    ╰ [✓] Task 1
-       ╰ [⨯] Failed task   <-- vec[false, true] no line
+    ⠹ 0.2s Root Task
+    ├─ ✔ 0.1s Task 1
+    │  ╰─ ⠹ 0.3s Task 3         <-- vec[true, true] has line
+    ╰─ ✔ 0.1s Task 1
+       ╰─ ✖ 0.0s Failed task    <-- vec[false, true] no line
 */
 type Depth = Vec<bool>;
 
@@ -140,6 +140,7 @@ pub struct TermStatusInternal {
     task_tree: Arc<TaskTree>,
     pub max_log_level: Level,
     enabled: bool,
+    spin_frame: usize,
 }
 
 impl TermStatusInternal {
@@ -149,6 +150,7 @@ impl TermStatusInternal {
             task_tree,
             max_log_level: Level::default(),
             enabled: false,
+            spin_frame: 0,
         }
     }
 
@@ -161,6 +163,7 @@ impl TermStatusInternal {
     /// with one `write_all` + `flush`.  Wrapped in synchronized-output
     /// markers so the terminal paints it atomically — no flicker.
     fn render_frame(&mut self, w: &mut impl Write) -> Result<()> {
+        self.spin_frame = self.spin_frame.wrapping_add(1);
         let rows = self.make_status_rows()?;
         let buffered_lines = drain_buffer();
         let new_height = rows.len();
@@ -275,13 +278,19 @@ impl TermStatusInternal {
             }
         }
 
-        let (_, term_height) = crossterm::terminal::size().unwrap_or((50, 50));
+        let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 50));
         let max_height = term_height as usize - 2;
 
         if rows.len() > max_height {
             let trimmed = rows.len() - max_height;
             rows = rows.into_iter().take(max_height).collect();
             rows.push(format!(".......{} more tasks.......", trimmed))
+        }
+
+        // Separator between scrolling log output and the live status tree.
+        if !rows.is_empty() {
+            let sep = "─".repeat(term_width as usize).dimmed().to_string();
+            rows.insert(0, sep);
         }
 
         Ok(rows)
@@ -293,42 +302,32 @@ impl TermStatusInternal {
     }
 
     fn task_row(&self, task_internal: &TaskInternal, mut depth: Depth) -> Result<String> {
-        /*
-
-        [▶] Root Task
-        │
-        ├ [✓] Task 1
-        │  ╰ [▶] Task 3
-        ├ [✓] Task 1
-        ╰ [⨯] Failed task
-        */
-
         let indent = if let Some(last_indent) = depth.pop() {
-            // Worst case utf8 symbol pre level is 4 bytes
-            let mut indent = String::with_capacity(4 * depth.len());
+            let mut s = String::with_capacity(4 * depth.len());
             for has_vertical_line in depth.into_iter() {
                 if has_vertical_line {
-                    indent.push_str("│ ");
+                    s.push_str("│  ");
                 } else {
-                    indent.push_str("  ");
+                    s.push_str("   ");
                 }
             }
 
             if last_indent {
-                indent.push_str("├ ");
+                s.push_str("├─ ");
             } else {
-                indent.push_str("╰ ");
+                s.push_str("╰─ ");
             }
 
-            indent
+            s.dimmed().to_string()
         } else {
             String::new()
         };
 
+        let spinner_ch = SPINNER[self.spin_frame % SPINNER.len()];
         let status = match task_internal.status {
-            TaskStatus::Running => " ▶ ".black().on_yellow(),
-            TaskStatus::Finished(TaskResult::Success, _) => " ✓ ".black().on_green(),
-            TaskStatus::Finished(TaskResult::Failure(_), _) => " x ".white().on_red(),
+            TaskStatus::Running => format!("{}", spinner_ch).yellow(),
+            TaskStatus::Finished(TaskResult::Success, _) => "✔".green(),
+            TaskStatus::Finished(TaskResult::Failure(_), _) => "✖".red(),
         };
 
         let progress = make_progress(task_internal);
@@ -342,29 +341,46 @@ impl TermStatusInternal {
 
         let secs = duration.as_secs();
         let millis = (duration.as_millis() % 1000) / 100;
-        let ts = format!(" [{}.{}s] ", secs, millis).dimmed();
+        let ts = format!("{}.{}s", secs, millis).dimmed();
 
         Ok(format!(
-            "{}{}{}{}{}",
-            indent, status, ts, progress, task_internal.name
+            "{}{} {} {}{}",
+            indent, status, ts, task_internal.name, progress
         ))
     }
 }
 
 fn make_progress(task: &TaskInternal) -> String {
-    const PROGRESS_BAR_LEN: i64 = 30;
+    const BAR_WIDTH: usize = 30;
 
     if let Some((done, total)) = &task.progress {
         if *total == 0 {
-            // otherwise we'll divide by 0 and it'll panic
             return String::new();
         }
-        let pct_done = (done * 100) / total;
-        let done_blocks_len = std::cmp::min((PROGRESS_BAR_LEN * pct_done) / 100, PROGRESS_BAR_LEN);
-        let todo_blocks_len = PROGRESS_BAR_LEN - done_blocks_len;
-        let done_blocks = " ".repeat(done_blocks_len as usize).on_bright_green();
-        let todo_blocks = ".".repeat(todo_blocks_len as usize).on_black();
-        format!(" [{}{}] {}/{} ", done_blocks, todo_blocks, done, total)
+        let ratio = (*done as f64) / (*total as f64);
+        // Each braille cell has a left and right column, giving
+        // half-character resolution at the fill boundary.
+        let filled_halves = ((ratio * (BAR_WIDTH * 2) as f64) as usize).min(BAR_WIDTH * 2);
+
+        let full = filled_halves / 2;
+        let half = filled_halves % 2;
+        let empty = BAR_WIDTH - full - half;
+
+        // ⣿ = all 8 dots (dense fill)
+        // ⡇ = left column only (half-cell boundary)
+        // ⣀ = bottom 2 dots (subtle empty track)
+        let filled_part = "⣿".repeat(full);
+        let half_part = if half > 0 { "⡇" } else { "" };
+        let empty_part = "⣀".repeat(empty);
+
+        format!(
+            " {}{}{} {}/{} ",
+            filled_part.green(),
+            half_part.green(),
+            empty_part.bright_black(),
+            done,
+            total
+        )
     } else {
         String::new()
     }
