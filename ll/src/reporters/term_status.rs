@@ -25,13 +25,23 @@ lazy_static::lazy_static! {
 /// Returns true when the live status tree is being rendered.
 /// Used by `StdioReporter` to decide whether to buffer output.
 pub fn is_active() -> bool {
-    TERM_STATUS_ACTIVE.load(Ordering::Relaxed)
+    TERM_STATUS_ACTIVE.load(Ordering::SeqCst)
 }
 
 /// Push a formatted log line into the buffer.  The render loop will
 /// drain these and write them to stderr before the next frame.
+///
+/// If TermStatus was deactivated between the caller's `is_active()`
+/// check and this call (a race window), the line is written directly
+/// to stderr instead of buffering — preventing orphaned lines.
 pub fn buffer_line(line: String) {
-    LOG_BUFFER.lock().unwrap().push(line);
+    let mut buf = LOG_BUFFER.lock().unwrap();
+    if TERM_STATUS_ACTIVE.load(Ordering::SeqCst) {
+        buf.push(line);
+    } else {
+        drop(buf);
+        eprintln!("{line}");
+    }
 }
 
 /// Drain all buffered log lines.
@@ -66,7 +76,7 @@ impl TermStatus {
         } else {
             lock.enabled = true;
         }
-        TERM_STATUS_ACTIVE.store(true, Ordering::Relaxed);
+        TERM_STATUS_ACTIVE.store(true, Ordering::SeqCst);
         drop(lock);
 
         let t = self.clone();
@@ -111,11 +121,26 @@ impl TermStatus {
         // Otherwise a StdioReporter could see is_active()==false,
         // eprintln! a line while the frame is still on screen, and
         // then clear_frame() would wipe that line along with the frame.
-        TERM_STATUS_ACTIVE.store(false, Ordering::Relaxed);
+        TERM_STATUS_ACTIVE.store(false, Ordering::SeqCst);
 
         internal.clear_frame(&mut stderr_lock).ok();
 
         // Flush any remaining buffered lines now that the frame is gone.
+        for line in drain_buffer() {
+            writeln!(stderr_lock, "{line}").ok();
+        }
+
+        drop(stderr_lock);
+        drop(internal);
+
+        // Final sweep: a reporter thread that checked is_active()→true
+        // before our store above may have raced into buffer_line() and
+        // pushed a line between our drain and now.  buffer_line() itself
+        // also guards against this (checks ACTIVE under the lock), but
+        // this second drain catches any edge case.  Since ACTIVE is now
+        // false, no new lines will be buffered after this point.
+        let stderr = std::io::stderr();
+        let mut stderr_lock = stderr.lock();
         for line in drain_buffer() {
             writeln!(stderr_lock, "{line}").ok();
         }
