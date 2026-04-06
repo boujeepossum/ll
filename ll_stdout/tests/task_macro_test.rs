@@ -1,72 +1,62 @@
-use crate::task;
-use crate::{task_tree::TaskTree, StringReporter, Task};
 use anyhow::Result;
 use k9::*;
+use ll::task;
+use ll::task_tree::TaskTree;
+use ll::Task;
+use ll_stdout::StringReporter;
 use std::sync::Arc;
-use std::time::Duration;
-
-async fn sleep() {
-    tokio::time::sleep(Duration::from_millis(100)).await;
-}
 
 fn setup() -> (Arc<TaskTree>, StringReporter) {
     let string_reporter = StringReporter::new();
     let tt = TaskTree::new();
+    tt.set_force_flush(true);
     tt.add_reporter(Arc::new(string_reporter.clone()));
     (tt, string_reporter)
 }
 
 // ── Helper functions annotated with #[task] ──────────────────────────
 
-// --- Edge case: task param named differently ---
 #[task]
 async fn step_one(parent: &Task) -> Result<()> {
     parent.data("from", "step_one");
     Ok(())
 }
 
-// --- Edge case: fully qualified type crate::Task ---
 #[task]
-async fn step_two(t: &crate::Task) -> Result<()> {
+async fn step_two(t: &ll::Task) -> Result<()> {
     t.data("from", "step_two");
     Ok(())
 }
 
-// --- Edge case: owned Task (not a reference) ---
 #[task(sync)]
 fn step_three(t: Task) -> Result<()> {
     t.data("from", "step_three");
     Ok(())
 }
 
-// --- tags(...) attribute ---
 #[task(tags(l2))]
 async fn verbose_step(task: &Task) -> Result<()> {
     task.data("detail", "noisy");
     Ok(())
 }
 
-// --- tags + name override ---
 #[task(name = "check", tags(l3, nostatus))]
 async fn run_checks(task: &Task) -> Result<()> {
     task.data("result", "pass");
     Ok(())
 }
 
-// --- tags + sync ---
 #[task(sync, tags(l3))]
 fn quiet_sync_step(task: &Task) -> Result<()> {
     task.data("mode", "quiet");
     Ok(())
 }
 
-// --- tags + data ---
 #[task(tags(l2), data(env))]
 async fn tagged_with_data(env: &str, task: &Task) -> Result<()> {
     Ok(())
 }
 
-// --- nested: parent tagged, child untagged ---
 #[task(tags(l2))]
 async fn tagged_parent(task: &Task) -> Result<()> {
     untagged_child(&task).await?;
@@ -137,14 +127,12 @@ fn sync_with_children(task: &Task) -> Result<()> {
 
 // ── Tests ────────────────────────────────────────────────────────────
 
-/// Basic #[task] async spawn: function name becomes the task name,
-/// data is attached to the child (not the parent).
 #[tokio::test]
 async fn macro_async_spawn() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     build(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -159,13 +147,12 @@ async fn macro_async_spawn() -> Result<()> {
     Ok(())
 }
 
-/// #[task(sync)] produces a synchronous spawn_sync call.
 #[tokio::test]
 async fn macro_sync_spawn() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     check_lockfile(&root)?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -180,13 +167,12 @@ async fn macro_sync_spawn() -> Result<()> {
     Ok(())
 }
 
-/// #[task(data(...))] auto-logs listed parameters as task data.
 #[tokio::test]
 async fn macro_data_logging() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     deploy("production", "us-east-1", &root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -202,14 +188,12 @@ async fn macro_data_logging() -> Result<()> {
     Ok(())
 }
 
-/// #[task(name = "...")] overrides the task name. Tags in the name
-/// (like #l2) are parsed normally.
 #[tokio::test]
 async fn macro_name_override() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     run_tests(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -224,15 +208,12 @@ async fn macro_name_override() -> Result<()> {
     Ok(())
 }
 
-/// Nested #[task] functions: outer calls inner. The task tree should be
-/// root > outer > inner, proving the macro passes the child task (not the
-/// parent) to nested calls.
 #[tokio::test]
 async fn macro_nested_tasks() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     outer(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -250,22 +231,19 @@ async fn macro_nested_tasks() -> Result<()> {
     Ok(())
 }
 
-/// Error propagation: a failing #[task] fn returns Err and the task
-/// tree shows the error with attached data.
 #[tokio::test]
 async fn macro_error_propagation() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     let result = failing_task(&root).await;
     assert!(result.is_err());
-
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
         "
 [ ] | STARTING | root
-[ ] | STARTING | [ERR] root:failing_task
+[ ] | STARTING | root:failing_task
 [ ] [ERR] root:failing_task
   |      attempt: 1
   |
@@ -281,15 +259,12 @@ async fn macro_error_propagation() -> Result<()> {
     Ok(())
 }
 
-/// Sync task with manually-spawned children: verifies that `task` inside
-/// the macro body is the child task, so children appear under the
-/// macro-created task, not the root.
 #[tokio::test]
 async fn macro_sync_with_children() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     sync_with_children(&root)?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -297,9 +272,9 @@ async fn macro_sync_with_children() -> Result<()> {
 [ ] | STARTING | root
 [ ] | STARTING | root:sync_with_children
 [ ] | STARTING | root:sync_with_children:child_a
-[ ] | STARTING | root:sync_with_children:child_b
 [ ] root:sync_with_children:child_a
   |      child_val: a
+[ ] | STARTING | root:sync_with_children:child_b
 [ ] root:sync_with_children:child_b
   |      child_val: b
 [ ] root:sync_with_children
@@ -310,33 +285,26 @@ async fn macro_sync_with_children() -> Result<()> {
     Ok(())
 }
 
-/// Mixing macro and manual spawns in one tree: root uses macro for
-/// one child, manual spawn for another. Both appear as siblings.
 #[tokio::test]
 async fn macro_mixed_with_manual() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
-
-    // Macro-based
     build(&root).await?;
-
-    // Manual spawn on the same parent
     root.spawn("manual_step", |t| async move {
         t.data("mode", "manual");
         Ok(())
     })
     .await?;
-
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
         "
 [ ] | STARTING | root
 [ ] | STARTING | root:build
-[ ] | STARTING | root:manual_step
 [ ] root:build
   |      compiler: rustc
+[ ] | STARTING | root:manual_step
 [ ] root:manual_step
   |      mode: manual
 
@@ -345,17 +313,14 @@ async fn macro_mixed_with_manual() -> Result<()> {
     Ok(())
 }
 
-/// Transitive data flows through macro-spawned tasks correctly.
 #[tokio::test]
 async fn macro_transitive_data() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     root.data_transitive("request_id", "abc-123");
-
     outer(&root).await?;
-    sleep().await;
+    tt.report_all();
 
-    // Both outer and inner should have the transitive data
     snapshot!(
         s.to_string(),
         "
@@ -374,13 +339,12 @@ async fn macro_transitive_data() -> Result<()> {
     Ok(())
 }
 
-/// Edge case: task parameter can be named anything, not just `task`.
 #[tokio::test]
 async fn macro_task_param_named_differently() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     step_one(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -395,13 +359,12 @@ async fn macro_task_param_named_differently() -> Result<()> {
     Ok(())
 }
 
-/// Edge case: Task type can be fully qualified (crate::Task, some_module::Task).
 #[tokio::test]
 async fn macro_fully_qualified_task_type() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     step_two(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -416,13 +379,12 @@ async fn macro_fully_qualified_task_type() -> Result<()> {
     Ok(())
 }
 
-/// Edge case: owned Task (not a reference) works with sync spawn.
 #[tokio::test]
 async fn macro_owned_task() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     step_three(root.clone())?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -437,15 +399,12 @@ async fn macro_owned_task() -> Result<()> {
     Ok(())
 }
 
-/// tags(...) appends hashtag tags to the task name.
-/// Verifies that (a) the display name strips the tag and (b) the tag
-/// is actually stored on the TaskInternal for reporter filtering.
 #[tokio::test]
 async fn macro_tags() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     verbose_step(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -458,7 +417,6 @@ async fn macro_tags() -> Result<()> {
 "
     );
 
-    // Verify the tag is actually stored on the task
     let tree = tt.tree_internal.read().unwrap();
     let child = tree
         .tasks_internal
@@ -469,13 +427,12 @@ async fn macro_tags() -> Result<()> {
     Ok(())
 }
 
-/// tags(...) combined with name override: both name and tags apply.
 #[tokio::test]
 async fn macro_tags_with_name_override() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     run_checks(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -488,7 +445,6 @@ async fn macro_tags_with_name_override() -> Result<()> {
 "
     );
 
-    // Verify both tags are stored
     let tree = tt.tree_internal.read().unwrap();
     let child = tree
         .tasks_internal
@@ -500,13 +456,12 @@ async fn macro_tags_with_name_override() -> Result<()> {
     Ok(())
 }
 
-/// tags(...) with sync spawn.
 #[tokio::test]
 async fn macro_tags_sync() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     quiet_sync_step(&root)?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -529,13 +484,12 @@ async fn macro_tags_sync() -> Result<()> {
     Ok(())
 }
 
-/// tags(...) combined with data(...): both work together.
 #[tokio::test]
 async fn macro_tags_with_data() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     tagged_with_data("prod", &root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -558,14 +512,12 @@ async fn macro_tags_with_data() -> Result<()> {
     Ok(())
 }
 
-/// Nested tasks: parent has tags, child does not. Tags should NOT
-/// propagate to children — only the parent task has the tag.
 #[tokio::test]
 async fn macro_tags_do_not_propagate_to_children() -> Result<()> {
     let (tt, s) = setup();
     let root = tt.create_task("root");
     tagged_parent(&root).await?;
-    sleep().await;
+    tt.report_all();
 
     snapshot!(
         s.to_string(),
@@ -599,16 +551,11 @@ async fn macro_tags_do_not_propagate_to_children() -> Result<()> {
     Ok(())
 }
 
-/// Verify tags(l2) produces the same result as name = "fn_name #l2".
-/// This ensures tags(...) is equivalent to manually embedding tags in the name.
 #[tokio::test]
 async fn macro_tags_equivalent_to_name_with_hashtag() -> Result<()> {
     let (tt, _s) = setup();
     let root = tt.create_task("root");
-
-    // verbose_step uses tags(l2)
     verbose_step(&root).await?;
-    // run_tests uses name = "test #l2"
     run_tests(&root).await?;
 
     let tree = tt.tree_internal.read().unwrap();
@@ -623,7 +570,6 @@ async fn macro_tags_equivalent_to_name_with_hashtag() -> Result<()> {
         .find(|t| t.name == "test")
         .unwrap();
 
-    // Both should have the "l2" tag
     assert!(via_tags.tags.contains("l2"));
     assert!(via_name.tags.contains("l2"));
     Ok(())

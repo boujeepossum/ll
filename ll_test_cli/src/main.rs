@@ -12,11 +12,11 @@ fn sleep_ms(lo: u64, hi: u64) -> Duration {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut reporter = ll::reporters::StdioReporter::new();
+    let mut reporter = ll_stdout::StdioReporter::new();
     reporter.log_task_start = true;
     reporter.max_log_level = Level::L3;
     ll::add_reporter(Arc::new(reporter));
-    ll::reporters::term_status::show();
+    ll_stdout::term_status::show();
     ll::task_tree::TASK_TREE.set_force_flush(true);
 
     let root = Task::create_new("pipeline #nostatus #l0");

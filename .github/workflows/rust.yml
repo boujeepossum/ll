@@ -23,6 +23,20 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - run: cargo test --verbose
 
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Build ll core for WASM
+        run: cargo build -p ll --target wasm32-unknown-unknown
+      - name: Run WASM tests
+        run: wasm-pack test --node ll_wasm
+
   lint:
     runs-on: ubuntu-latest
     steps:

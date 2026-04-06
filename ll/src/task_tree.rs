@@ -8,9 +8,8 @@ use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::thread;
 use std::time::Duration;
-use std::time::SystemTime;
+use web_time::SystemTime;
 
 lazy_static::lazy_static! {
     pub static ref TASK_TREE: Arc<TaskTree>  = TaskTree::new();
@@ -25,14 +24,14 @@ pub trait ErrorFormatter: Send + Sync {
 }
 
 pub struct TaskTree {
-    pub(crate) tree_internal: RwLock<TaskTreeInternal>,
+    pub tree_internal: RwLock<TaskTreeInternal>,
     /// If true, it will block the current thread until all task events are
     /// reported (e.g. written to STDOUT)
     force_flush: AtomicBool,
 }
 
-pub(crate) struct TaskTreeInternal {
-    pub(crate) tasks_internal: BTreeMap<UniqID, TaskInternal>,
+pub struct TaskTreeInternal {
+    pub tasks_internal: BTreeMap<UniqID, TaskInternal>,
     parent_to_children: BTreeMap<UniqID, BTreeSet<UniqID>>,
     child_to_parents: BTreeMap<UniqID, BTreeSet<UniqID>>,
     root_tasks: BTreeSet<UniqID>,
@@ -80,7 +79,7 @@ pub enum TaskResult {
 
 impl TaskTree {
     pub fn new() -> Arc<Self> {
-        let s = Arc::new(Self {
+        Arc::new(Self {
             tree_internal: RwLock::new(TaskTreeInternal {
                 tasks_internal: BTreeMap::new(),
                 parent_to_children: BTreeMap::new(),
@@ -97,22 +96,7 @@ impl TaskTree {
                 error_formatter: None,
             }),
             force_flush: AtomicBool::new(false),
-        });
-        let clone = s.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                let mut tree = clone.tree_internal.write().unwrap();
-                tree.garbage_collect();
-            }
-        });
-        let clone = s.clone();
-        thread::spawn(move || loop {
-            thread::sleep(std::time::Duration::from_millis(10));
-            clone.report_all();
-        });
-
-        s
+        })
     }
 
     pub fn set_force_flush(&self, enabled: bool) {
@@ -217,6 +201,7 @@ impl TaskTree {
         self.post_spawn(id, result)
     }
 
+    #[cfg(feature = "tokio")]
     pub(crate) async fn spawn_tokio<F, FT, T>(
         self: &Arc<Self>,
         name: String,
@@ -247,6 +232,7 @@ impl TaskTree {
         }
     }
 
+    #[cfg(feature = "tokio")]
     pub(crate) async fn spawn_blocking<F, T>(
         self: &Arc<Self>,
         name: String,
@@ -434,6 +420,14 @@ impl TaskTree {
         if self.force_flush.load(Ordering::SeqCst) {
             self.report_all();
         }
+    }
+
+    /// Run garbage collection to remove finished tasks from memory.
+    /// Without background workers, callers (e.g. a reporter thread in
+    /// `ll_stdout`) should call this periodically.
+    pub fn garbage_collect(&self) {
+        let mut tree = self.tree_internal.write().unwrap();
+        tree.garbage_collect();
     }
 
     pub fn report_all(&self) {

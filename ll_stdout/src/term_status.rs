@@ -1,9 +1,9 @@
-use super::Level;
-use crate::task_tree::{TaskInternal, TaskResult, TaskStatus, TaskTree, TASK_TREE};
-use crate::uniq_id::UniqID;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use crossterm::{cursor, style, terminal};
+use ll::reporters::Level;
+use ll::task_tree::{TaskInternal, TaskResult, TaskStatus, TaskTree, TASK_TREE};
+use ll::uniq_id::UniqID;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -59,6 +59,22 @@ pub fn show() {
 
 pub fn hide() {
     TERM_STATUS.hide();
+}
+
+/// Start a background thread that periodically calls `report_all()` on
+/// the global task tree.  The core `ll` crate no longer runs its own
+/// reporter dispatch loop, so `ll_stdout` starts one when the first
+/// reporter is activated.
+///
+/// The thread runs every 10ms and exits when `stop` is set to true.
+pub fn start_reporter_thread(task_tree: Arc<TaskTree>, stop: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        while !stop.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            task_tree.report_all();
+            task_tree.garbage_collect();
+        }
+    });
 }
 
 #[derive(Clone)]
@@ -321,7 +337,7 @@ impl TermStatusInternal {
     }
 
     fn should_print(&self, task: &TaskInternal) -> bool {
-        let level = super::utils::parse_level(task);
+        let level = ll::reporters::utils::parse_level(task);
         !task.tags.contains(NOSTATUS_TAG) && (level <= self.max_log_level)
     }
 
