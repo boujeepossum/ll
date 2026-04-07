@@ -135,9 +135,8 @@ async fn no_args_when_disabled() -> Result<()> {
         .find(|e| e["name"] == "task_with_data")
         .expect("task_with_data event not found in trace");
     // args should either be absent or not contain the data key
-    match task.get("args").and_then(|a| a.as_object()) {
-        Some(args) => assert!(!args.contains_key("should_not_appear")),
-        None => {} // no args at all — that's fine
+    if let Some(args) = task.get("args").and_then(|a| a.as_object()) {
+        assert!(!args.contains_key("should_not_appear"));
     }
 
     Ok(())
