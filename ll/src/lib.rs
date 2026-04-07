@@ -57,8 +57,6 @@ child task.
 |---|---|---|
 | `#[task]` | [`Task::spawn`] | `async fn` |
 | `#[task(sync)]` | [`Task::spawn_sync`] | `fn` |
-| `#[task(tokio)]` | [`Task::spawn_tokio`] | `async fn` |
-| `#[task(blocking)]` | [`Task::spawn_blocking`] | `async fn` |
 
 ### Optional attributes
 

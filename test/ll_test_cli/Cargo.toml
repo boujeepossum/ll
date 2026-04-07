@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-ll = { path = "../../ll", features = ["tokio"] }
+ll = { path = "../../ll" }
 ll_stdio = { path = "../../ll_stdio" }
 ll_fixtures = { path = "../ll_fixtures" }
 anyhow = "1"

@@ -7,14 +7,10 @@ description = "rust logging library"
 license = "MIT"
 repository = "https://github.com/boujeepossum/ll"
 
-[features]
-tokio = ["dep:tokio"]
-
 [dependencies]
 anyhow = "1"
 lazy_static = "1"
 ll_macros = { version = "8.1.0", path = "../ll_macros" }
-tokio = { version = "1", features = ["full"], optional = true }
 web-time = "1"
 
 [dev-dependencies]

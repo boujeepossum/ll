@@ -8,10 +8,6 @@ enum SpawnKind {
     Async,
     /// `task.spawn_sync(name, move |task| { .. })`
     Sync,
-    /// `task.spawn_tokio(name, move |task| async move { .. }).await`
-    Tokio,
-    /// `task.spawn_blocking(name, move |task| { .. }).await`
-    Blocking,
 }
 
 /// Parsed `#[task(...)]` attributes.
@@ -52,19 +48,12 @@ impl TaskAttr {
 
         for meta in parsed {
             match &meta {
-                // #[task(sync)], #[task(tokio)], #[task(blocking)]
+                // #[task(sync)]
                 syn::Meta::Path(path) => {
                     if path.is_ident("sync") {
                         kind = SpawnKind::Sync;
-                    } else if path.is_ident("tokio") {
-                        kind = SpawnKind::Tokio;
-                    } else if path.is_ident("blocking") {
-                        kind = SpawnKind::Blocking;
                     } else {
-                        return Err(syn::Error::new_spanned(
-                            path,
-                            "expected `sync`, `tokio`, or `blocking`",
-                        ));
+                        return Err(syn::Error::new_spanned(path, "expected `sync`"));
                     }
                 }
                 // #[task(data(a, b, c))]
@@ -99,7 +88,7 @@ impl TaskAttr {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         &meta,
-                        "unexpected attribute, expected `sync`, `tokio`, `blocking`, \
+                        "unexpected attribute, expected `sync`, \
                          `data(...)`, `tags(...)`, or `name = \"...\"`",
                     ));
                 }
@@ -174,8 +163,6 @@ fn find_task_param(sig: &syn::Signature) -> syn::Result<&Ident> {
 /// |-----------|--------|-----------------|
 /// | `#[task]` | [`Task::spawn`] | `async fn` |
 /// | `#[task(sync)]` | [`Task::spawn_sync`] | `fn` |
-/// | `#[task(tokio)]` | [`Task::spawn_tokio`] | `async fn` |
-/// | `#[task(blocking)]` | [`Task::spawn_blocking`] | `async fn` |
 ///
 /// # Optional attributes
 ///
@@ -229,16 +216,6 @@ fn find_task_param(sig: &syn::Signature) -> syn::Result<&Ident> {
 /// }
 /// ```
 ///
-/// Blocking task on tokio's thread pool:
-///
-/// ```ignore
-/// #[task(blocking)]
-/// async fn compress(data: Vec<u8>, task: &Task) -> Result<Vec<u8>> {
-///     // runs on spawn_blocking pool, won't stall the async executor
-///     Ok(zstd::compress(&data, 3)?)
-/// }
-/// ```
-///
 /// Nested usage — macro-wrapped functions calling each other:
 ///
 /// ```ignore
@@ -275,7 +252,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
             .to_compile_error()
             .into();
         }
-        (SpawnKind::Async | SpawnKind::Tokio | SpawnKind::Blocking, false) => {
+        (SpawnKind::Async, false) => {
             return syn::Error::new_spanned(
                 func.sig.fn_token,
                 "#[task] requires `async fn`; use #[task(sync)] for synchronous functions",
@@ -360,22 +337,6 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #(#data_stmts)*
                     #body
                 })
-            })
-        }
-        SpawnKind::Tokio => {
-            syn::parse_quote!({
-                #task_ident.spawn_tokio(#task_name, move |#task_ident| async move {
-                    #(#data_stmts)*
-                    #body
-                }).await
-            })
-        }
-        SpawnKind::Blocking => {
-            syn::parse_quote!({
-                #task_ident.spawn_blocking(#task_name, move |#task_ident| {
-                    #(#data_stmts)*
-                    #body
-                }).await
             })
         }
     };

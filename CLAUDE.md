@@ -53,7 +53,7 @@ ll_wasm (separate crate):
 
 - **Task** (`ll/src/task.rs`) — the user-facing handle. Created via `Task::create_new()` / `Task::spawn_new()` / `Task::spawn_sync_new()` (root) or `task.spawn()` / `task.create()` (child). RAII-based lifecycle: dropping the handle marks the task finished.
 
-- **Spawn variants** — `spawn` (inline async), `spawn_sync` (inline sync), `spawn_tokio` (tokio::spawn, falls back to inline without tokio feature), `spawn_blocking` (tokio::task::spawn_blocking, falls back to inline sync without tokio feature).
+- **Spawn variants** — `spawn` (inline async) and `spawn_sync` (inline sync).
 
 - **Tag system** (`ll/src/utils.rs`) — metadata encoded inline via hashtag syntax. `"download #l3 #nostatus"` becomes name `"download"` with tags `{"l3", "nostatus"}`. Tags control reporter visibility, log level filtering, etc.
 
@@ -62,8 +62,6 @@ ll_wasm (separate crate):
 - **Task cleanup** — when a task finishes, `try_remove()` checks if all children are gone. If yes, removes it and cascades up to the parent. No periodic GC needed.
 
 - **`web-time`** — used instead of `std::time::SystemTime` so the core compiles for WASM (`SystemTime::now()` panics on `wasm32-unknown-unknown`).
-
-- **`tokio` feature** — optional. Enables real `tokio::spawn` / `spawn_blocking`. Without it, these fall back to inline execution so code compiles unchanged on WASM.
 
 ## File layout
 

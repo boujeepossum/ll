@@ -73,72 +73,15 @@ impl Task {
             .await
     }
 
-    /// Run an async closure as a child task on a **new tokio task**
-    /// (`tokio::spawn`).
-    ///
-    /// Unlike [`spawn`](Self::spawn), the future runs concurrently on the
-    /// tokio runtime — it does not block the caller's async task. Use this
-    /// when you need true parallelism across multiple async operations without
-    /// manually calling `tokio::spawn` and cloning the parent task handle.
-    ///
-    /// The closure and its return type must be `'static` because they are
-    /// moved into a detached tokio task.
-    ///
-    /// If the spawned task panics, the ll task is marked as failed and the
-    /// panic is returned as an `anyhow::Error`.
-    ///
-    /// Without the `tokio` feature, falls back to inline await (same as
-    /// [`spawn`](Self::spawn)), so code compiles unchanged on WASM.
-    pub async fn spawn_tokio<F, FT, T, S: Into<String>>(&self, name: S, f: F) -> Result<T>
-    where
-        F: FnOnce(Task) -> FT + Send + 'static,
-        FT: Future<Output = Result<T>> + Send + 'static,
-        T: Send + 'static,
-    {
-        self.0
-            .task_tree
-            .spawn_tokio(name.into(), f, Some(self.0.id))
-            .await
-    }
-
     /// Run a synchronous closure as a child task on the current thread.
     ///
     /// The closure runs inline and blocks the current thread until it returns.
-    /// Good for cheap synchronous work. For CPU-heavy or blocking I/O work,
-    /// use [`spawn_blocking`](Self::spawn_blocking) instead to avoid starving
-    /// the async executor.
     pub fn spawn_sync<F, T, S: Into<String>>(&self, name: S, f: F) -> Result<T>
     where
         F: FnOnce(Task) -> Result<T>,
         T: Send,
     {
         self.0.task_tree.spawn_sync(name.into(), f, Some(self.0.id))
-    }
-
-    /// Run a synchronous closure as a child task on **tokio's blocking thread
-    /// pool** (`tokio::task::spawn_blocking`).
-    ///
-    /// Use this for CPU-heavy computation or blocking I/O that would otherwise
-    /// stall the async executor thread. The closure runs on a dedicated OS
-    /// thread, and the returned future resolves once it completes.
-    ///
-    /// The closure must be `'static` because it is moved to a separate thread.
-    ///
-    /// If the blocking task panics, the ll task is marked as failed and the
-    /// panic is returned as an `anyhow::Error`.
-    ///
-    /// Without the `tokio` feature, falls back to inline sync execution
-    /// (same as [`spawn_sync`](Self::spawn_sync)), so code compiles
-    /// unchanged on WASM.
-    pub async fn spawn_blocking<F, T, S: Into<String>>(&self, name: S, f: F) -> Result<T>
-    where
-        F: FnOnce(Task) -> Result<T> + Send + 'static,
-        T: Send + 'static,
-    {
-        self.0
-            .task_tree
-            .spawn_blocking(name.into(), f, Some(self.0.id))
-            .await
     }
 
     pub fn data<D: Into<DataValue>>(&self, name: &str, data: D) {
