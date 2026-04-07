@@ -95,10 +95,7 @@ fn task_to_trace_event(
 }
 
 fn to_micros(time: SystemTime, epoch: SystemTime) -> f64 {
-    time.duration_since(epoch)
-        .unwrap_or_default()
-        .as_secs_f64()
-        * 1_000_000.0
+    time.duration_since(epoch).unwrap_or_default().as_secs_f64() * 1_000_000.0
 }
 
 fn extract_level_tag(task: &TaskInternal) -> &'static str {

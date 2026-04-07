@@ -147,22 +147,20 @@ impl Reporter for TraceReporter {
         let state = self.state.clone();
         let include_args = self.include_args;
         let include_tags = self.include_tags;
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_millis(10));
-                let events = std::mem::take(&mut *queue.lock().unwrap());
-                if !events.is_empty() {
-                    let mut s = state.lock().unwrap();
-                    if !s.finalized {
-                        let epoch = s.epoch;
-                        let _ = writer::write_events(
-                            &mut s.writer,
-                            &events,
-                            epoch,
-                            include_args,
-                            include_tags,
-                        );
-                    }
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(10));
+            let events = std::mem::take(&mut *queue.lock().unwrap());
+            if !events.is_empty() {
+                let mut s = state.lock().unwrap();
+                if !s.finalized {
+                    let epoch = s.epoch;
+                    let _ = writer::write_events(
+                        &mut s.writer,
+                        &events,
+                        epoch,
+                        include_args,
+                        include_tags,
+                    );
                 }
             }
         });

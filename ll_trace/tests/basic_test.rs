@@ -62,7 +62,10 @@ async fn basic_trace_output() -> Result<()> {
     let task_events: Vec<_> = events.iter().filter(|e| e["ph"] == "X").collect();
 
     // We expect events for: root, child_a, child_b
-    let names: Vec<_> = task_events.iter().map(|e| e["name"].as_str().unwrap()).collect();
+    let names: Vec<_> = task_events
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
     assert!(names.contains(&"child_a"));
     assert!(names.contains(&"child_b"));
     assert!(names.contains(&"root"));
@@ -99,7 +102,10 @@ async fn error_task_includes_error_in_args() -> Result<()> {
     let events = parsed["traceEvents"].as_array().unwrap();
 
     let failing = events.iter().find(|e| e["name"] == "failing").unwrap();
-    assert!(failing["args"]["error"].as_str().unwrap().contains("something went wrong"));
+    assert!(failing["args"]["error"]
+        .as_str()
+        .unwrap()
+        .contains("something went wrong"));
 
     Ok(())
 }
@@ -133,7 +139,10 @@ async fn no_args_when_disabled() -> Result<()> {
     let parsed: serde_json::Value = serde_json::from_str(&output)?;
     let events = parsed["traceEvents"].as_array().unwrap();
 
-    let task = events.iter().find(|e| e["name"] == "task_with_data").unwrap();
+    let task = events
+        .iter()
+        .find(|e| e["name"] == "task_with_data")
+        .unwrap();
     // Should not contain the data key (args may still have parent path)
     assert!(task["args"].get("should_not_appear").is_none());
 
