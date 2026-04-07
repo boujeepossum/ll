@@ -11,7 +11,6 @@ use std::sync::Arc;
 /// Initialize ll_stdio with sensible defaults:
 /// - StdioReporter with `log_task_start = true`
 /// - TermStatus live display (if TTY)
-/// - force_flush enabled
 pub fn init() {
     Builder::default().init();
 }
@@ -23,7 +22,6 @@ pub fn builder() -> Builder {
 pub struct Builder {
     log_task_start: bool,
     max_log_level: Level,
-    force_flush: bool,
     term_status: bool,
 }
 
@@ -32,7 +30,6 @@ impl Default for Builder {
         Self {
             log_task_start: true,
             max_log_level: Level::default(),
-            force_flush: true,
             term_status: true,
         }
     }
@@ -46,11 +43,6 @@ impl Builder {
 
     pub fn max_log_level(mut self, level: Level) -> Self {
         self.max_log_level = level;
-        self
-    }
-
-    pub fn force_flush(mut self, val: bool) -> Self {
-        self.force_flush = val;
         self
     }
 
@@ -68,7 +60,5 @@ impl Builder {
         if self.term_status {
             term_status::show();
         }
-
-        ll::task_tree::TASK_TREE.set_force_flush(self.force_flush);
     }
 }

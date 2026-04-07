@@ -3,12 +3,10 @@ use crate::reporters::Reporter;
 use crate::task::{Task, TaskData};
 use crate::uniq_id::UniqID;
 use anyhow::{Context, Result};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Duration;
 use web_time::SystemTime;
 
 lazy_static::lazy_static! {
@@ -25,9 +23,6 @@ pub trait ErrorFormatter: Send + Sync {
 
 pub struct TaskTree {
     pub tree_internal: RwLock<TaskTreeInternal>,
-    /// If true, it will block the current thread until all task events are
-    /// reported (e.g. written to STDOUT)
-    force_flush: AtomicBool,
 }
 
 pub struct TaskTreeInternal {
@@ -36,11 +31,7 @@ pub struct TaskTreeInternal {
     child_to_parents: BTreeMap<UniqID, BTreeSet<UniqID>>,
     root_tasks: BTreeSet<UniqID>,
     reporters: Vec<Arc<dyn Reporter>>,
-    tasks_marked_for_deletion: HashMap<UniqID, SystemTime>,
-    report_start: Vec<UniqID>,
-    report_end: Vec<UniqID>,
     data_transitive: Data,
-    remove_task_after_done_ms: u64,
     hide_errors_default_msg: Option<Arc<String>>,
     attach_transitive_data_to_errors_default: bool,
     error_formatter: Option<Arc<dyn ErrorFormatter>>,
@@ -77,52 +68,23 @@ pub enum TaskResult {
     Failure(String),
 }
 
+// ── TaskTree ─────────────────────────────────────────────────────
+
 impl TaskTree {
     pub fn new() -> Arc<Self> {
-        let s = Arc::new(Self {
+        Arc::new(Self {
             tree_internal: RwLock::new(TaskTreeInternal {
                 tasks_internal: BTreeMap::new(),
                 parent_to_children: BTreeMap::new(),
                 child_to_parents: BTreeMap::new(),
                 root_tasks: BTreeSet::new(),
                 reporters: vec![],
-                tasks_marked_for_deletion: HashMap::new(),
-                report_start: vec![],
-                report_end: vec![],
                 data_transitive: Data::empty(),
-                remove_task_after_done_ms: 0,
                 hide_errors_default_msg: None,
                 attach_transitive_data_to_errors_default: true,
                 error_formatter: None,
             }),
-            force_flush: AtomicBool::new(false),
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let clone = s.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    let mut tree = clone.tree_internal.write().unwrap();
-                    tree.garbage_collect();
-                }
-            });
-            let clone = s.clone();
-            std::thread::spawn(move || loop {
-                std::thread::sleep(Duration::from_millis(10));
-                clone.report_all();
-            });
-        }
-
-        s
-    }
-
-    pub fn set_force_flush(&self, enabled: bool) {
-        self.force_flush.store(enabled, Ordering::SeqCst)
-    }
-
-    pub fn force_flush_enabled(&self) -> bool {
-        self.force_flush.load(Ordering::SeqCst)
+        })
     }
 
     pub fn create_task(self: &Arc<Self>, name: &str) -> Task {
@@ -139,13 +101,11 @@ impl TaskTree {
     }
 
     fn pre_spawn(self: &Arc<Self>, name: String, parent: Option<UniqID>) -> Task {
-        let task = Task(Arc::new(TaskData {
+        Task(Arc::new(TaskData {
             id: self.create_task_internal(&name, parent),
             task_tree: self.clone(),
             mark_done_on_drop: false,
-        }));
-        self.maybe_force_flush();
-        task
+        }))
     }
 
     fn post_spawn<T>(self: &Arc<Self>, id: UniqID, result: Result<T>) -> Result<T> {
@@ -182,7 +142,6 @@ impl TaskTree {
             None
         };
         self.mark_done(id, error_msg);
-        self.maybe_force_flush();
         result
     }
 
@@ -244,7 +203,6 @@ impl TaskTree {
             Err(join_err) => {
                 let msg = format!("spawned task panicked: {join_err}");
                 self.mark_done(id, Some(msg.clone()));
-                self.maybe_force_flush();
                 Err(anyhow::anyhow!(msg))
             }
         }
@@ -290,7 +248,6 @@ impl TaskTree {
             Err(join_err) => {
                 let msg = format!("blocking task panicked: {join_err}");
                 self.mark_done(id, Some(msg.clone()));
-                self.maybe_force_flush();
                 Err(anyhow::anyhow!(msg))
             }
         }
@@ -357,8 +314,15 @@ impl TaskTree {
             attach_transitive_data_to_errors: tree.attach_transitive_data_to_errors_default,
         };
 
-        tree.tasks_internal.insert(id, task_internal);
-        tree.report_start.push(id);
+        tree.tasks_internal.insert(id, task_internal.clone());
+
+        // Dispatch start event inline.
+        let reporters = tree.reporters.clone();
+        drop(tree);
+        let task_arc = Arc::new(task_internal);
+        for reporter in &reporters {
+            reporter.task_start(task_arc.clone());
+        }
 
         id
     }
@@ -367,8 +331,16 @@ impl TaskTree {
         let mut tree = self.tree_internal.write().unwrap();
         if let Some(task_internal) = tree.tasks_internal.get_mut(&id) {
             task_internal.mark_done(error_message);
-            tree.mark_for_gc(id);
-            tree.report_end.push(id);
+
+            // Dispatch end event inline.
+            let task_arc = Arc::new(task_internal.clone());
+            let reporters = tree.reporters.clone();
+            for reporter in &reporters {
+                reporter.task_end(task_arc.clone());
+            }
+
+            // Try to clean up this task and any finished ancestors.
+            tree.try_remove(id);
         }
     }
 
@@ -380,8 +352,8 @@ impl TaskTree {
     }
 
     pub fn get_data<S: Into<String>>(&self, id: UniqID, key: S) -> Option<DataValue> {
-        let mut tree = self.tree_internal.write().unwrap();
-        if let Some(task_internal) = tree.tasks_internal.get_mut(&id) {
+        let tree = self.tree_internal.read().unwrap();
+        if let Some(task_internal) = tree.tasks_internal.get(&id) {
             let all_data: BTreeMap<_, _> = task_internal.all_data().collect();
             return all_data.get(&key.into()).map(|de| de.0.clone());
         }
@@ -464,30 +436,9 @@ impl TaskTree {
         let tree = self.tree_internal.read().unwrap();
         tree.get_task(id).ok().cloned()
     }
-
-    /// If force_flush set to true, this function will block the thread until everything
-    /// is reported. Useful for cases when the process exits before all async events
-    /// are reported and stuff is missing from stdout.
-    pub fn maybe_force_flush(&self) {
-        if self.force_flush.load(Ordering::SeqCst) {
-            self.report_all();
-        }
-    }
-
-    pub fn report_all(&self) {
-        let mut tree = self.tree_internal.write().unwrap();
-        let (start_tasks, end_tasks, reporters) = tree.get_tasks_and_reporters();
-        drop(tree);
-        for reporter in reporters {
-            for task in &start_tasks {
-                reporter.task_start(task.clone());
-            }
-            for task in &end_tasks {
-                reporter.task_end(task.clone());
-            }
-        }
-    }
 }
+
+// ── TaskTreeInternal ─────────────────────────────────────────────
 
 #[allow(dead_code)]
 impl TaskTreeInternal {
@@ -507,99 +458,42 @@ impl TaskTreeInternal {
         &self.parent_to_children
     }
 
-    fn mark_for_gc(&mut self, id: UniqID) {
-        let mut stack = vec![id];
-
-        let mut tasks_to_finished_status = BTreeMap::new();
-
-        while let Some(id) = stack.pop() {
-            if let Some(task_internal) = self.tasks_internal.get(&id) {
-                tasks_to_finished_status
-                    .insert(id, matches!(task_internal.status, TaskStatus::Finished(..)));
-            }
-
-            for child_id in self.parent_to_children.get(&id).into_iter().flatten() {
-                stack.push(*child_id);
+    /// Remove a finished task if all its children are also gone.
+    /// Then cascade up to the parent — it may now be removable too.
+    fn try_remove(&mut self, id: UniqID) {
+        // Only remove if no children remain.
+        if let Some(children) = self.parent_to_children.get(&id) {
+            if !children.is_empty() {
+                return;
             }
         }
 
-        if tasks_to_finished_status
-            .iter()
-            .all(|(_, finished)| *finished)
-        {
-            for id in tasks_to_finished_status.keys().copied() {
-                self.tasks_marked_for_deletion
-                    .entry(id)
-                    .or_insert_with(SystemTime::now); // can't use or_default, need current time
-            }
+        // Only remove finished tasks.
+        let is_finished = self
+            .tasks_internal
+            .get(&id)
+            .is_some_and(|t| matches!(t.status, TaskStatus::Finished(..)));
+        if !is_finished {
+            return;
+        }
 
-            // This sub branch might have been holding other parent branches that
-            // weren't able to be garbage collected because of this subtree. we'll go
-            // level up and perform the same logic.
-            let parents = self.child_to_parents.get(&id).cloned().unwrap_or_default();
+        self.tasks_internal.remove(&id);
+        self.parent_to_children.remove(&id);
+        self.root_tasks.remove(&id);
+
+        if let Some(parents) = self.child_to_parents.remove(&id) {
             for parent_id in parents {
-                self.mark_for_gc(parent_id);
-            }
-        }
-    }
-
-    pub fn garbage_collect(&mut self) {
-        let mut will_delete = vec![];
-        for (id, time) in &self.tasks_marked_for_deletion {
-            if let Ok(elapsed) = time.elapsed() {
-                if elapsed > Duration::from_millis(self.remove_task_after_done_ms) {
-                    will_delete.push(*id);
+                if let Some(children) = self.parent_to_children.get_mut(&parent_id) {
+                    children.remove(&id);
                 }
+                // Parent might now be removable — cascade up.
+                self.try_remove(parent_id);
             }
         }
-
-        for id in will_delete {
-            self.tasks_internal.remove(&id);
-            self.parent_to_children.remove(&id);
-            self.root_tasks.remove(&id);
-            if let Some(parents) = self.child_to_parents.remove(&id) {
-                for parent in parents {
-                    if let Some(children) = self.parent_to_children.get_mut(&parent) {
-                        children.remove(&id);
-                    }
-                }
-            }
-            self.tasks_marked_for_deletion.remove(&id);
-        }
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn get_tasks_and_reporters(
-        &mut self,
-    ) -> (
-        Vec<Arc<TaskInternal>>,
-        Vec<Arc<TaskInternal>>,
-        Vec<Arc<dyn Reporter>>,
-    ) {
-        let mut start_ids = vec![];
-        std::mem::swap(&mut start_ids, &mut self.report_start);
-        let mut end_ids = vec![];
-        std::mem::swap(&mut end_ids, &mut self.report_end);
-
-        let mut start_tasks = vec![];
-        let mut end_tasks = vec![];
-
-        for id in start_ids {
-            if let Ok(task_internal) = self.get_task(id) {
-                start_tasks.push(Arc::new(task_internal.clone()));
-            }
-        }
-        for id in end_ids {
-            if let Ok(task_internal) = self.get_task(id) {
-                end_tasks.push(Arc::new(task_internal.clone()));
-            }
-        }
-
-        let reporters = self.reporters.clone();
-
-        (start_tasks, end_tasks, reporters)
     }
 }
+
+// ── TaskInternal ─────────────────────────────────────────────────
 
 impl TaskInternal {
     pub(crate) fn mark_done(&mut self, error_message: Option<String>) {

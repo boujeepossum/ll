@@ -45,7 +45,6 @@ impl Reporter for VecReporter {
 fn setup() -> (Arc<TaskTree>, VecReporter) {
     let reporter = VecReporter::new();
     let tt = TaskTree::new();
-    tt.set_force_flush(true);
     tt.add_reporter(Arc::new(reporter.clone()));
     (tt, reporter)
 }
@@ -61,7 +60,6 @@ fn create_task_and_spawn_sync() {
     })
     .unwrap();
 
-    tt.report_all();
     let events = r.events();
     assert!(events.contains(&"start:root".to_string()));
     assert!(events.contains(&"start:root:child".to_string()));
@@ -80,7 +78,6 @@ fn nested_tasks() {
     })
     .unwrap();
 
-    tt.report_all();
     let events = r.events();
     assert!(events.contains(&"start:pipeline:build:compile".to_string()));
     assert!(events.contains(&"start:pipeline:build:link".to_string()));
@@ -97,7 +94,6 @@ fn error_propagation() {
     });
 
     assert!(result.is_err());
-    tt.report_all();
     let events = r.events();
     assert!(events.contains(&"end:err:root:will_fail".to_string()));
 }
@@ -123,9 +119,7 @@ fn tags_extracted_from_name() {
 
     root.spawn_sync("step #l2 #nostatus", |_| Ok(())).unwrap();
 
-    tt.report_all();
     let events = r.events();
-    // Tags stripped from name — reporter sees "root:step"
     assert!(events.contains(&"start:root:step".to_string()));
     assert!(events.contains(&"end:ok:root:step".to_string()));
 }
@@ -133,7 +127,6 @@ fn tags_extracted_from_name() {
 #[wasm_bindgen_test]
 fn console_reporter_smoke_test() {
     let tt = TaskTree::new();
-    tt.set_force_flush(true);
     tt.add_reporter(Arc::new(crate::ConsoleReporter::new()));
 
     let root = tt.create_task("wasm_smoke_test");
@@ -142,6 +135,4 @@ fn console_reporter_smoke_test() {
         Ok(())
     })
     .unwrap();
-
-    tt.report_all();
 }

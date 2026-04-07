@@ -3,12 +3,7 @@ use k9::*;
 use ll::task_tree::TaskTree;
 use ll::ErrorFormatter;
 use ll_stdio::StringReporter;
-use std::{sync::Arc, time::Duration};
-
-async fn sleep() {
-    // just enough to drain the reporter tokio tasks
-    tokio::time::sleep(Duration::from_millis(100)).await;
-}
+use std::sync::Arc;
 
 fn setup() -> (Arc<TaskTree>, StringReporter) {
     let string_reporter = StringReporter::new();
@@ -38,15 +33,13 @@ async fn basic_events_test() -> Result<()> {
 
     root.spawn_sync("test_3", |_e| Ok(()))?;
 
-    sleep().await;
     snapshot!(
         s.to_string(),
         "
 [ ] | STARTING | root
 [ ] | STARTING | root:test
-[ ] | STARTING | [ERR] root:test_with_data
-[ ] | STARTING | root:test_3
 [ ] root:test
+[ ] | STARTING | root:test_with_data
 [ ] [ERR] root:test_with_data
   |      float: 5.98
   |      hello: hi
@@ -60,6 +53,7 @@ async fn basic_events_test() -> Result<()> {
   |  
   |  Caused by:
   |      here is error msg
+[ ] | STARTING | root:test_3
 [ ] root:test_3
 
 "
@@ -86,7 +80,6 @@ async fn error_chain_test() -> Result<()> {
         Ok(())
     });
 
-    sleep().await;
     snapshot!(
         format!("{:?}", result.unwrap_err()),
         "
@@ -108,9 +101,9 @@ Caused by:
         s.to_string(),
         "
 [ ] | STARTING | root
-[ ] | STARTING | [ERR] root:top_level
-[ ] | STARTING | [ERR] root:top_level:1_level
-[ ] | STARTING | [ERR] root:top_level:1_level:2_level
+[ ] | STARTING | root:top_level
+[ ] | STARTING | root:top_level:1_level
+[ ] | STARTING | root:top_level:1_level:2_level
 [ ] [ERR] root:top_level:1_level:2_level
   |
   |  [Task] 2_level
@@ -170,7 +163,6 @@ async fn error_chain_test_no_transitive() -> Result<()> {
         Ok(())
     });
 
-    sleep().await;
     snapshot!(
         format!("{:?}", result.unwrap_err()),
         "
@@ -193,9 +185,9 @@ Caused by:
         s.to_string(),
         "
 [ ] | STARTING | root
-[ ] | STARTING | [ERR] root:top_level
-[ ] | STARTING | [ERR] root:top_level:1_level
-[ ] | STARTING | [ERR] root:top_level:1_level:2_level
+[ ] | STARTING | root:top_level
+[ ] | STARTING | root:top_level:1_level
+[ ] | STARTING | root:top_level:1_level:2_level
 [ ] [ERR] root:top_level:1_level:2_level
   |      transitive_data: transitive_value
   |
@@ -260,7 +252,6 @@ async fn error_chain_test_hide_errors() -> Result<()> {
         Ok(())
     });
 
-    sleep().await;
     snapshot!(
         format!("{:?}", result.unwrap_err()),
         "
@@ -282,9 +273,9 @@ Caused by:
         s.to_string(),
         "
 [ ] | STARTING | root
-[ ] | STARTING | [ERR] root:top_level
-[ ] | STARTING | [ERR] root:top_level:1_level
-[ ] | STARTING | [ERR] root:top_level:1_level:2_level
+[ ] | STARTING | root:top_level
+[ ] | STARTING | root:top_level:1_level
+[ ] | STARTING | root:top_level:1_level:2_level
 [ ] [ERR] root:top_level:1_level:2_level <error omitted>
 [ ] [ERR] root:top_level:1_level
   |      1_level_data: 9
@@ -345,7 +336,6 @@ async fn error_chain_test_error_formatter() -> Result<()> {
         Ok(())
     });
 
-    sleep().await;
     snapshot!(
         format!("{:?}", result.unwrap_err()),
         "
@@ -367,11 +357,11 @@ Caused by:
         s.to_string(),
         "
 [ ] | STARTING | root
-[ ] | STARTING | [ERR] root:top_level
+[ ] | STARTING | root:top_level
 [ ] | STARTING | root:top_level:random_stuff
-[ ] | STARTING | [ERR] root:top_level:1_level
-[ ] | STARTING | [ERR] root:top_level:1_level:2_level
 [ ] root:top_level:random_stuff
+[ ] | STARTING | root:top_level:1_level
+[ ] | STARTING | root:top_level:1_level:2_level
 [ ] [ERR] root:top_level:1_level:2_level <error omitted>
 [ ] [ERR] root:top_level:1_level
   |      1_level_data: 9
@@ -433,29 +423,28 @@ async fn logger_data_test() -> Result<()> {
         Ok(())
     })?;
 
-    sleep().await;
     snapshot!(
         s.to_string(),
         "
 [ ] | STARTING | root
 [ ] | STARTING | root:t1
 [ ] | STARTING | root:t1:has_process_id
-[ ] | STARTING | root:t1:t2
-[ ] | STARTING | root:t1:t2:has_process_and_request_id
-[ ] | STARTING | root:t1:t2:t3
-[ ] | STARTING | root:t1:t2:t3:wont_print_request_id
-[ ] | STARTING | root:t1:t2:t3:t4
-[ ] | STARTING | root:t1:t2:t3:t4:wont_print_request_id
 [ ] root:t1:has_process_id
   |      process_id: 123
   |      tree_transitive_data: 5
+[ ] | STARTING | root:t1:t2
+[ ] | STARTING | root:t1:t2:has_process_and_request_id
 [ ] root:t1:t2:has_process_and_request_id
   |      process_id: 123
   |      request_id: 234
   |      tree_transitive_data: 5
+[ ] | STARTING | root:t1:t2:t3
+[ ] | STARTING | root:t1:t2:t3:wont_print_request_id
 [ ] root:t1:t2:t3:wont_print_request_id
   |      process_id: 123
   |      tree_transitive_data: 5
+[ ] | STARTING | root:t1:t2:t3:t4
+[ ] | STARTING | root:t1:t2:t3:t4:wont_print_request_id
 [ ] root:t1:t2:t3:t4:wont_print_request_id
   |      hello: meow
   |      process_id: 123
@@ -479,7 +468,6 @@ async fn async_test() -> Result<()> {
     })
     .await?;
 
-    sleep().await;
     snapshot!(
         s.to_string(),
         "
