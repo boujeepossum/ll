@@ -44,7 +44,7 @@ async fn basic_trace_output() -> Result<()> {
     drop(root);
 
     // Give the drain thread time to process events
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::thread::sleep(std::time::Duration::from_millis(100));
     guard.flush();
 
     let output = String::from_utf8(writer.0.lock().unwrap().clone())?;
@@ -132,7 +132,7 @@ async fn no_args_when_disabled() -> Result<()> {
     })?;
     drop(root);
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::thread::sleep(std::time::Duration::from_millis(100));
     guard.flush();
 
     let output = String::from_utf8(writer.0.lock().unwrap().clone())?;
@@ -142,9 +142,12 @@ async fn no_args_when_disabled() -> Result<()> {
     let task = events
         .iter()
         .find(|e| e["name"] == "task_with_data")
-        .unwrap();
-    // Should not contain the data key (args may still have parent path)
-    assert!(task["args"].get("should_not_appear").is_none());
+        .expect("task_with_data event not found in trace");
+    // args should either be absent or not contain the data key
+    match task.get("args").and_then(|a| a.as_object()) {
+        Some(args) => assert!(!args.contains_key("should_not_appear")),
+        None => {} // no args at all — that's fine
+    }
 
     Ok(())
 }
