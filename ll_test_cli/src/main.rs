@@ -3,7 +3,6 @@ use ll::reporters::Level;
 use ll::task;
 use ll::Task;
 use rand::Rng;
-use std::sync::Arc;
 use std::time::Duration;
 
 fn sleep_ms(lo: u64, hi: u64) -> Duration {
@@ -12,12 +11,7 @@ fn sleep_ms(lo: u64, hi: u64) -> Duration {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut reporter = ll_stdio::StdioReporter::new();
-    reporter.log_task_start = true;
-    reporter.max_log_level = Level::L3;
-    ll::add_reporter(Arc::new(reporter));
-    ll_stdio::term_status::show();
-    ll::task_tree::TASK_TREE.set_force_flush(true);
+    ll_stdio::builder().max_log_level(Level::L3).init();
 
     let root = Task::create_new("pipeline #nostatus #l0");
     root.data_transitive("run_id", "test-run-42");
