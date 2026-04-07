@@ -47,6 +47,15 @@ impl Task {
         TASK_TREE.spawn(name.into(), f, None).await
     }
 
+    /// Spawn a new top level synchronous task, with no parent.
+    pub fn spawn_sync_new<F, T>(name: &str, f: F) -> Result<T>
+    where
+        F: FnOnce(Task) -> Result<T>,
+        T: Send,
+    {
+        TASK_TREE.spawn_sync(name.into(), f, None)
+    }
+
     /// Run an async closure as a child task on the current async thread.
     ///
     /// The future runs inline — it is `.await`ed directly without creating
