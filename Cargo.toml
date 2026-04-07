@@ -6,5 +6,6 @@ members = [
     "ll_macros",
     "ll_stdio",
     "ll_wasm",
-    "ll_test_cli",
+    "test/ll_fixtures",
+    "test/ll_test_cli",
 ]
