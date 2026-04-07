@@ -77,7 +77,6 @@ impl Task {
     ///
     /// If the spawned task panics, the ll task is marked as failed and the
     /// panic is returned as an `anyhow::Error`.
-    #[cfg(feature = "tokio")]
     pub async fn spawn_tokio<F, FT, T, S: Into<String>>(&self, name: S, f: F) -> Result<T>
     where
         F: FnOnce(Task) -> FT + Send + 'static,
@@ -115,7 +114,6 @@ impl Task {
     ///
     /// If the blocking task panics, the ll task is marked as failed and the
     /// panic is returned as an `anyhow::Error`.
-    #[cfg(feature = "tokio")]
     pub async fn spawn_blocking<F, T, S: Into<String>>(&self, name: S, f: F) -> Result<T>
     where
         F: FnOnce(Task) -> Result<T> + Send + 'static,

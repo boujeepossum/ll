@@ -250,6 +250,22 @@ impl TaskTree {
         }
     }
 
+    /// Fallback: runs inline (same as `spawn`) when tokio is not available.
+    #[cfg(not(feature = "tokio"))]
+    pub(crate) async fn spawn_tokio<F, FT, T>(
+        self: &Arc<Self>,
+        name: String,
+        f: F,
+        parent: Option<UniqID>,
+    ) -> Result<T>
+    where
+        F: FnOnce(Task) -> FT + Send + 'static,
+        FT: Future<Output = Result<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.spawn(name, f, parent).await
+    }
+
     #[cfg(feature = "tokio")]
     pub(crate) async fn spawn_blocking<F, T>(
         self: &Arc<Self>,
@@ -278,6 +294,24 @@ impl TaskTree {
                 Err(anyhow::anyhow!(msg))
             }
         }
+    }
+
+    /// Fallback: runs inline (same as `spawn_sync`) when tokio is not available.
+    #[cfg(not(feature = "tokio"))]
+    pub(crate) async fn spawn_blocking<F, T>(
+        self: &Arc<Self>,
+        name: String,
+        f: F,
+        parent: Option<UniqID>,
+    ) -> Result<T>
+    where
+        F: FnOnce(Task) -> Result<T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let task = self.pre_spawn(name, parent);
+        let id = task.0.id;
+        let result = f(task);
+        self.post_spawn(id, result)
     }
 
     pub fn create_task_internal<S: Into<String>>(
