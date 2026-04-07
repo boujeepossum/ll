@@ -5,6 +5,7 @@ members = [
     "ll",
     "ll_macros",
     "ll_stdio",
+    "ll_trace",
     "ll_wasm",
     "test/ll_fixtures",
     "test/ll_test_cli",
