@@ -1,6 +1,6 @@
 [package]
 name = "ll_stdio"
-version = "8.1.0"
+version = "10.0.0"
 edition = "2018"
 authors = ["Aaron Abrams <aaron@abrams.cc>"]
 description = "Terminal reporters for ll — StdioReporter, StringReporter, TermStatus"
@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/boujeepossum/ll"
 
 [dependencies]
-ll = { version = "8.1.0", path = "../ll" }
+ll = { version = "10.0.0", path = "../ll" }
 anyhow = "1"
 chrono = "0.4"
 colored = "3"
