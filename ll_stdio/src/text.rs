@@ -56,9 +56,7 @@ impl Reporter for StdioReporter {
         let log_task_start = self.log_task_start;
         let max_log_level = self.max_log_level;
 
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            let events = std::mem::take(&mut *queue.lock().unwrap());
+        crate::drain_loop(queue, move |events| {
             for event in events {
                 let (task, report_type) = match event {
                     TaskEvent::Start(t) => {

@@ -6,7 +6,33 @@ pub use term_status::TermStatus;
 pub use text::StdioReporter;
 pub use text::StringReporter;
 
+use ll::reporters::{EventQueue, TaskEvent};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Spawn a background thread that drains an event queue every 10ms,
+/// calling `handler` with each batch. Useful for implementing custom
+/// reporters that need a drain loop without writing the boilerplate.
+///
+/// ```ignore
+/// impl Reporter for MyReporter {
+///     fn start(&self, queue: EventQueue) {
+///         let this = self.clone();
+///         ll_stdio::drain_loop(queue, move |events| {
+///             for event in events { /* ... */ }
+///         });
+///     }
+/// }
+/// ```
+pub fn drain_loop(queue: EventQueue, handler: impl Fn(Vec<TaskEvent>) + Send + 'static) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(10));
+        let events = std::mem::take(&mut *queue.lock().unwrap());
+        if !events.is_empty() {
+            handler(events);
+        }
+    });
+}
 
 /// Initialize ll_stdio with sensible defaults:
 /// - StdioReporter with `log_task_start = true`
