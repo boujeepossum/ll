@@ -9,7 +9,7 @@ use web_time::SystemTime;
 
 /// Write the JSON header that opens the trace file.
 pub fn write_header(w: &mut impl Write, process_name: &str) -> std::io::Result<()> {
-    write!(w, "{{\"traceEvents\":[\n")?;
+    writeln!(w, "{{\"traceEvents\":[")?;
     let meta = TraceEvent {
         ph: "M",
         name: "process_name",
@@ -44,7 +44,7 @@ pub fn write_events(
             _ => continue,
         };
         let trace = task_to_trace_event(task, epoch, include_args, include_tags);
-        write!(w, ",\n")?;
+        writeln!(w, ",")?;
         serde_json::to_writer(&mut *w, &trace)?;
     }
     Ok(())
@@ -119,11 +119,8 @@ fn build_args(
     let mut map = serde_json::Map::new();
 
     // status / error
-    match &task.status {
-        TaskStatus::Finished(TaskResult::Failure(msg), _) => {
-            map.insert("error".into(), serde_json::Value::String(msg.clone()));
-        }
-        _ => {}
+    if let TaskStatus::Finished(TaskResult::Failure(msg), _) = &task.status {
+        map.insert("error".into(), serde_json::Value::String(msg.clone()));
     }
 
     // parent path
