@@ -8,8 +8,8 @@ use std::sync::Arc;
 ll::add_reporter(Arc::new(ll_wasm::ConsoleReporter::new()));
 ```
 
-Events are dispatched inline when tasks start/finish — no timer or
-background thread needed.
+The reporter sets up a JS `setInterval` timer to drain its event queue
+automatically.
 */
 
 mod console_reporter;

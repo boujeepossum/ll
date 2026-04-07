@@ -1,12 +1,12 @@
 use crate::data::{Data, DataEntry, DataValue};
-use crate::reporters::Reporter;
+use crate::reporters::{EventQueue, Reporter, TaskEvent};
 use crate::task::{Task, TaskData};
 use crate::uniq_id::UniqID;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use web_time::SystemTime;
 
 lazy_static::lazy_static! {
@@ -30,7 +30,7 @@ pub struct TaskTreeInternal {
     parent_to_children: BTreeMap<UniqID, BTreeSet<UniqID>>,
     child_to_parents: BTreeMap<UniqID, BTreeSet<UniqID>>,
     root_tasks: BTreeSet<UniqID>,
-    reporters: Vec<Arc<dyn Reporter>>,
+    event_queues: Vec<EventQueue>,
     data_transitive: Data,
     hide_errors_default_msg: Option<Arc<String>>,
     attach_transitive_data_to_errors_default: bool,
@@ -78,7 +78,7 @@ impl TaskTree {
                 parent_to_children: BTreeMap::new(),
                 child_to_parents: BTreeMap::new(),
                 root_tasks: BTreeSet::new(),
-                reporters: vec![],
+                event_queues: vec![],
                 data_transitive: Data::empty(),
                 hide_errors_default_msg: None,
                 attach_transitive_data_to_errors_default: true,
@@ -97,7 +97,13 @@ impl TaskTree {
     }
 
     pub fn add_reporter(&self, reporter: Arc<dyn Reporter>) {
-        self.tree_internal.write().unwrap().reporters.push(reporter);
+        let queue: EventQueue = Arc::new(Mutex::new(Vec::new()));
+        self.tree_internal
+            .write()
+            .unwrap()
+            .event_queues
+            .push(queue.clone());
+        reporter.start(queue);
     }
 
     fn pre_spawn(self: &Arc<Self>, name: String, parent: Option<UniqID>) -> Task {
@@ -316,12 +322,13 @@ impl TaskTree {
 
         tree.tasks_internal.insert(id, task_internal.clone());
 
-        // Dispatch start event inline.
-        let reporters = tree.reporters.clone();
-        drop(tree);
+        // Push start event to all reporter queues.
         let task_arc = Arc::new(task_internal);
-        for reporter in &reporters {
-            reporter.task_start(task_arc.clone());
+        for queue in &tree.event_queues {
+            queue
+                .lock()
+                .unwrap()
+                .push(TaskEvent::Start(task_arc.clone()));
         }
 
         id
@@ -332,14 +339,13 @@ impl TaskTree {
         if let Some(task_internal) = tree.tasks_internal.get_mut(&id) {
             task_internal.mark_done(error_message);
 
-            // Dispatch end event inline.
+            // Push end event to all reporter queues.
             let task_arc = Arc::new(task_internal.clone());
-            let reporters = tree.reporters.clone();
-            for reporter in &reporters {
-                reporter.task_end(task_arc.clone());
+            for queue in &tree.event_queues {
+                queue.lock().unwrap().push(TaskEvent::End(task_arc.clone()));
             }
 
-            // Try to clean up this task and any finished ancestors.
+            // Clean up this task and any finished ancestors.
             tree.try_remove(id);
         }
     }
@@ -371,14 +377,7 @@ impl TaskTree {
             task_internal.data_transitive.add(key, value);
         }
     }
-    /// Reporters can use this flag to choose to not report errors.
-    /// This is useful for cases where there's a large task chain and every
-    /// single task reports a partial errors (that gets built up with each task)
-    /// It would make sense to report it only once at the top level (thrift
-    /// request, cli call, etc) and only mark other tasks.
-    /// If set to Some, the message inside is what would be reported by default
-    /// instead of reporting errors to avoid confusion (e.g. "error was hidden,
-    /// see ...")
+
     pub fn hide_errors_default_msg<S: Into<String>>(&self, msg: Option<S>) {
         let mut tree = self.tree_internal.write().unwrap();
         let msg = msg.map(|msg| Arc::new(msg.into()));
@@ -392,10 +391,6 @@ impl TaskTree {
         }
     }
 
-    /// When errors occur, we attach task data to it in the description.
-    /// If set to false, only task direct data will be attached and not
-    /// transitive data. This is useful sometimes to remove the noise of
-    /// transitive data appearing in every error in the chain (e.g. hostname)
     pub fn attach_transitive_data_to_errors_default(&self, val: bool) {
         let mut tree = self.tree_internal.write().unwrap();
         tree.attach_transitive_data_to_errors_default = val;
@@ -408,18 +403,11 @@ impl TaskTree {
         }
     }
 
-    /// Add a custom error formatter to change how error messages look in
-    /// reporters.
-    /// Unfortunately it is not configurable per reporter, because errors
-    /// normally don't implement `Clone` and it will be almost impossible to add
-    /// reference counters to all errors in all chains
     pub fn set_error_formatter(&self, error_formatter: Option<Arc<dyn ErrorFormatter>>) {
         let mut tree = self.tree_internal.write().unwrap();
         tree.error_formatter = error_formatter;
     }
 
-    /// Add transitive data to the task tree. This transitive data will be
-    /// added to every task created in this task tree
     pub fn add_data_transitive<S: Into<String>, D: Into<DataValue>>(&self, key: S, value: D) {
         let mut tree = self.tree_internal.write().unwrap();
         tree.data_transitive.add(key, value);
@@ -429,6 +417,15 @@ impl TaskTree {
         let mut tree = self.tree_internal.write().unwrap();
         if let Some(task_internal) = tree.tasks_internal.get_mut(&id) {
             task_internal.progress = Some((done, total));
+
+            // Push progress event to all reporter queues.
+            let task_arc = Arc::new(task_internal.clone());
+            for queue in &tree.event_queues {
+                queue
+                    .lock()
+                    .unwrap()
+                    .push(TaskEvent::Progress(task_arc.clone()));
+            }
         }
     }
 
@@ -461,14 +458,12 @@ impl TaskTreeInternal {
     /// Remove a finished task if all its children are also gone.
     /// Then cascade up to the parent — it may now be removable too.
     fn try_remove(&mut self, id: UniqID) {
-        // Only remove if no children remain.
         if let Some(children) = self.parent_to_children.get(&id) {
             if !children.is_empty() {
                 return;
             }
         }
 
-        // Only remove finished tasks.
         let is_finished = self
             .tasks_internal
             .get(&id)
@@ -486,7 +481,6 @@ impl TaskTreeInternal {
                 if let Some(children) = self.parent_to_children.get_mut(&parent_id) {
                     children.remove(&id);
                 }
-                // Parent might now be removable — cascade up.
                 self.try_remove(parent_id);
             }
         }

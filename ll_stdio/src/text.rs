@@ -2,27 +2,25 @@ use crate::term_status;
 use chrono::prelude::*;
 use chrono::{DateTime, Local, Utc};
 use colored::*;
-use ll::reporters::{Level, Reporter, DONTPRINT_TAG};
+use ll::reporters::{EventQueue, Level, Reporter, TaskEvent, DONTPRINT_TAG};
 use ll::task_tree::{TaskInternal, TaskResult, TaskStatus};
 use std::sync::{Arc, Mutex, RwLock};
 
-/// Simple drain that logs everything into STDOUT
+/// Text reporter that logs to stderr (or stdout).
+/// Spawns a background drain thread when started.
 pub struct StdioReporter {
     pub timestamp_format: Option<TimestampFormat>,
-    /// By default this reporter writes to STDERR,
-    /// this flag will make it write to STDOUT instead
     pub use_stdout: bool,
-    /// Report every time a new task is started as well, not only when tasks are
-    /// finished
     pub log_task_start: bool,
     pub max_log_level: Level,
 }
 
-// Similar to STDOUT drain, but instead logs everything into a string
-// that it owns that can later be inspected/dumped.
+/// In-memory reporter that captures output as a string.
+/// Drains lazily when `.to_string()` or `.drain()` is called.
 #[derive(Clone)]
 pub struct StringReporter {
     pub output: Arc<Mutex<String>>,
+    queue: Arc<RwLock<Option<EventQueue>>>,
     timestamp_format: Arc<RwLock<TimestampFormat>>,
     duration_format: Arc<RwLock<DurationFormat>>,
     strip_ansi: bool,
@@ -49,31 +47,51 @@ impl StdioReporter {
             max_log_level: Level::default(),
         }
     }
+}
 
-    fn report(&self, task_internal: Arc<TaskInternal>, report_type: TaskReportType) {
-        let level = ll::reporters::utils::parse_level(&task_internal);
+impl Reporter for StdioReporter {
+    fn start(&self, queue: EventQueue) {
+        let timestamp_format = self.timestamp_format.unwrap_or(TimestampFormat::UTC);
+        let use_stdout = self.use_stdout;
+        let log_task_start = self.log_task_start;
+        let max_log_level = self.max_log_level;
 
-        if level <= self.max_log_level {
-            if task_internal.tags.contains(DONTPRINT_TAG) {
-                return;
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            let events = std::mem::take(&mut *queue.lock().unwrap());
+            for event in events {
+                let (task, report_type) = match event {
+                    TaskEvent::Start(t) => {
+                        if !log_task_start {
+                            continue;
+                        }
+                        (t, TaskReportType::Start)
+                    }
+                    TaskEvent::End(t) => (t, TaskReportType::End),
+                    TaskEvent::Progress(_) => continue,
+                };
+
+                let level = ll::reporters::utils::parse_level(&task);
+                if level > max_log_level || task.tags.contains(DONTPRINT_TAG) {
+                    continue;
+                }
+
+                let result = make_string(
+                    &task,
+                    timestamp_format,
+                    DurationFormat::Milliseconds,
+                    report_type,
+                );
+
+                if use_stdout {
+                    println!("{result}");
+                } else if term_status::is_active() {
+                    term_status::buffer_line(result);
+                } else {
+                    eprintln!("{result}");
+                }
             }
-
-            let timestamp_format = self.timestamp_format.unwrap_or(TimestampFormat::UTC);
-            let result = make_string(
-                &task_internal,
-                timestamp_format,
-                DurationFormat::Milliseconds,
-                report_type,
-            );
-
-            if self.use_stdout {
-                println!("{result}");
-            } else if term_status::is_active() {
-                term_status::buffer_line(result);
-            } else {
-                eprintln!("{result}");
-            }
-        }
+        });
     }
 }
 
@@ -92,18 +110,6 @@ pub enum DurationFormat {
     None,
 }
 
-impl Reporter for StdioReporter {
-    fn task_start(&self, task_internal: Arc<TaskInternal>) {
-        if self.log_task_start {
-            self.report(task_internal, TaskReportType::Start)
-        }
-    }
-
-    fn task_end(&self, task_internal: Arc<TaskInternal>) {
-        self.report(task_internal, TaskReportType::End)
-    }
-}
-
 pub fn strip_ansi(s: &str) -> String {
     String::from_utf8(strip_ansi_escapes::strip(s)).expect("not a utf8 string")
 }
@@ -118,30 +124,44 @@ impl StringReporter {
     pub fn new() -> Self {
         Self {
             output: Arc::new(Mutex::new(String::new())),
+            queue: Arc::new(RwLock::new(None)),
             timestamp_format: Arc::new(RwLock::new(TimestampFormat::Redacted)),
             duration_format: Arc::new(RwLock::new(DurationFormat::None)),
             strip_ansi: true,
         }
     }
 
-    fn report(&self, task_internal: Arc<TaskInternal>, report_type: TaskReportType) {
-        if task_internal.tags.contains(DONTPRINT_TAG) {
+    /// Drain all pending events from the queue into the output string.
+    pub fn drain(&self) {
+        let queue_guard = self.queue.read().unwrap();
+        let Some(queue) = queue_guard.as_ref() else {
             return;
-        }
+        };
+        let events = std::mem::take(&mut *queue.lock().unwrap());
+        drop(queue_guard);
+
         let timestamp_format = *self.timestamp_format.read().unwrap();
         let duration_format = *self.duration_format.read().unwrap();
-        let mut result = make_string(
-            &task_internal,
-            timestamp_format,
-            duration_format,
-            report_type,
-        );
-        if self.strip_ansi {
-            result = strip_ansi(&result);
+
+        for event in events {
+            let (task, report_type) = match event {
+                TaskEvent::Start(t) => (t, TaskReportType::Start),
+                TaskEvent::End(t) => (t, TaskReportType::End),
+                TaskEvent::Progress(_) => continue,
+            };
+
+            if task.tags.contains(DONTPRINT_TAG) {
+                continue;
+            }
+
+            let mut result = make_string(&task, timestamp_format, duration_format, report_type);
+            if self.strip_ansi {
+                result = strip_ansi(&result);
+            }
+            let mut output = self.output.lock().expect("poisoned lock");
+            output.push_str(&result);
+            output.push('\n');
         }
-        let mut output = self.output.lock().expect("poisoned lock");
-        output.push_str(&result);
-        output.push('\n');
     }
 
     pub fn set_timestamp_format(&self, format: TimestampFormat) {
@@ -158,17 +178,14 @@ impl StringReporter {
 }
 
 impl Reporter for StringReporter {
-    fn task_start(&self, task_internal: Arc<TaskInternal>) {
-        self.report(task_internal, TaskReportType::Start);
-    }
-
-    fn task_end(&self, task_internal: Arc<TaskInternal>) {
-        self.report(task_internal, TaskReportType::End);
+    fn start(&self, queue: EventQueue) {
+        *self.queue.write().unwrap() = Some(queue);
     }
 }
 
 impl std::fmt::Display for StringReporter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.drain();
         let s = self.output.lock().expect("poisoned lock");
         write!(f, "{}", &s)
     }
@@ -193,9 +210,7 @@ pub fn make_string(
         data = format!("{data}\n");
     }
 
-    let result = format!("{timestamp}{status}{name}{data}{error}");
-
-    result
+    format!("{timestamp}{status}{name}{data}{error}")
 }
 
 fn format_timestamp(
@@ -216,7 +231,7 @@ fn format_timestamp(
 
     match timestamp_format {
         TimestampFormat::None => String::new(),
-        TimestampFormat::Redacted => "[ ] ".to_string(), // for testing
+        TimestampFormat::Redacted => "[ ] ".to_string(),
         TimestampFormat::Local => {
             if let Some(datetime) = datetime {
                 let datetime: DateTime<Local> = datetime.into();
@@ -255,7 +270,6 @@ fn format_status(
 ) -> String {
     match report_type {
         TaskReportType::Start => format!("| {} | ", "STARTING".yellow()),
-        // If it's the end of the task, we'll print a timestamp
         TaskReportType::End => {
             if let TaskStatus::Finished(_, finished_at) = task_internal.status {
                 let d = finished_at.duration_since(task_internal.started_at).ok();
@@ -283,10 +297,8 @@ fn format_data(task_internal: &TaskInternal) -> String {
         if entry.1.contains(DONTPRINT_TAG) {
             continue;
         }
-
         data.push(format!("  |      {k}: {}", entry.0).dimmed().to_string());
     }
-
     if !data.is_empty() {
         result.push('\n');
         result.push_str(&data.join("\n"));
