@@ -86,6 +86,9 @@ impl Task {
     ///
     /// If the spawned task panics, the ll task is marked as failed and the
     /// panic is returned as an `anyhow::Error`.
+    ///
+    /// Without the `tokio` feature, falls back to inline await (same as
+    /// [`spawn`](Self::spawn)), so code compiles unchanged on WASM.
     pub async fn spawn_tokio<F, FT, T, S: Into<String>>(&self, name: S, f: F) -> Result<T>
     where
         F: FnOnce(Task) -> FT + Send + 'static,
@@ -123,6 +126,10 @@ impl Task {
     ///
     /// If the blocking task panics, the ll task is marked as failed and the
     /// panic is returned as an `anyhow::Error`.
+    ///
+    /// Without the `tokio` feature, falls back to inline sync execution
+    /// (same as [`spawn_sync`](Self::spawn_sync)), so code compiles
+    /// unchanged on WASM.
     pub async fn spawn_blocking<F, T, S: Into<String>>(&self, name: S, f: F) -> Result<T>
     where
         F: FnOnce(Task) -> Result<T> + Send + 'static,

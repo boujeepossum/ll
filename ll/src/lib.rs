@@ -37,7 +37,8 @@ async fn compile(task: &Task) -> Result<()> {
 }
 
 async fn run() -> Result<()> {
-    ll::reporters::term_status::show();
+    // Set up terminal reporters (from the ll_stdio crate):
+    // ll_stdio::init();
     let root = Task::create_new("root");
     build(&root).await
 }
@@ -142,7 +143,7 @@ reporter visibility and filtering.
 | `#l1` | Reporter level L1 — default |
 | `#l2` | Reporter level L2 — hidden unless reporter threshold is L2+ |
 | `#l3` | Reporter level L3 — lowest priority, most filtered |
-| `#nostatus` | Hidden from [`TermStatus`] live display (still in text logs) |
+| `#nostatus` | Hidden from the live terminal status display (still in text logs) |
 | `#dontprint` | Suppressed from all text reporters |
 
 Tags can be set via the [`macro@task`] attribute (`tags(l2, nostatus)`) or
@@ -151,6 +152,7 @@ stored but have no built-in effect.
 
 Data keys also support tags: `task.data("response_body #trace", val)` marks
 the entry as trace-level, hiding it unless the data log level is set to Trace.
+The `#info` and `#debug` tags also work for data-level filtering.
  */
 #![allow(clippy::new_without_default)]
 

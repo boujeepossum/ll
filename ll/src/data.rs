@@ -47,8 +47,6 @@ impl Data {
             }
         }
 
-        // as of right now BTreeMap doesn't implement `.retain()`, so we'll
-        // have to do it the old way
         for key_to_remove in &to_remove {
             self.map.remove(key_to_remove);
         }

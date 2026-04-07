@@ -274,10 +274,7 @@ fn format_status(
                 match (d, format) {
                     (Some(d), DurationFormat::Milliseconds) => {
                         let ms = format_with_commas(d.as_millis() as u64);
-                        format!("| {ms:>5} ms | ")
-                            .bold()
-                            .dimmed()
-                            .to_string()
+                        format!("| {ms:>5} ms | ").bold().dimmed().to_string()
                     }
                     (Some(_), DurationFormat::None) => String::new(),
                     (None, _) => String::new(),

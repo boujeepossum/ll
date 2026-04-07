@@ -1,3 +1,14 @@
+/*!
+Terminal reporters for [`ll`]. Provides [`StdioReporter`] (text log to
+stderr/stdout), [`StringReporter`] (in-memory capture for tests), and
+[`TermStatus`] (live TUI with spinners, progress bars, and colored tree).
+
+Quick setup:
+```ignore
+ll_stdio::init();  // StdioReporter + TermStatus with sensible defaults
+```
+*/
+
 pub mod term_status;
 pub mod text;
 
