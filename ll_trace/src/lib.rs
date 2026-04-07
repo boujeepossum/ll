@@ -104,12 +104,20 @@ impl Builder {
     pub fn build_reporter(self) -> (Arc<dyn Reporter>, FlushGuard) {
         let w = self.writer.expect("must set a file or writer");
         let shared = Arc::new(Mutex::new(WriterState::new(w, &self.process_name)));
+        let queue_slot: Arc<Mutex<Option<EventQueue>>> = Arc::new(Mutex::new(None));
         let reporter = TraceReporter {
             state: shared.clone(),
+            queue_slot: queue_slot.clone(),
             include_args: self.include_args,
             include_tags: self.include_tags,
         };
-        (Arc::new(reporter), FlushGuard { state: shared })
+        let guard = FlushGuard {
+            state: shared,
+            queue_slot,
+            include_args: self.include_args,
+            include_tags: self.include_tags,
+        };
+        (Arc::new(reporter), guard)
     }
 }
 
@@ -118,13 +126,32 @@ impl Builder {
 /// Finalizes the trace file on drop. Hold this until you're done tracing.
 pub struct FlushGuard {
     state: Arc<Mutex<WriterState>>,
+    queue_slot: Arc<Mutex<Option<EventQueue>>>,
+    include_args: bool,
+    include_tags: bool,
 }
 
 impl FlushGuard {
-    /// Manually flush and finalize the trace. Called automatically on drop.
+    /// Drain any remaining events and finalize the trace. Called automatically on drop.
     pub fn flush(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.finalize();
+        let queue = self.queue_slot.lock().unwrap().clone();
+        if let Some(queue) = queue {
+            let events = std::mem::take(&mut *queue.lock().unwrap());
+            let mut state = self.state.lock().unwrap();
+            if !state.finalized && !events.is_empty() {
+                let epoch = state.epoch;
+                let _ = writer::write_events(
+                    &mut state.writer,
+                    &events,
+                    epoch,
+                    self.include_args,
+                    self.include_tags,
+                );
+            }
+            state.finalize();
+        } else {
+            self.state.lock().unwrap().finalize();
+        }
     }
 }
 
@@ -138,12 +165,14 @@ impl Drop for FlushGuard {
 
 struct TraceReporter {
     state: Arc<Mutex<WriterState>>,
+    queue_slot: Arc<Mutex<Option<EventQueue>>>,
     include_args: bool,
     include_tags: bool,
 }
 
 impl Reporter for TraceReporter {
     fn start(&self, queue: EventQueue) {
+        *self.queue_slot.lock().unwrap() = Some(queue.clone());
         let state = self.state.clone();
         let include_args = self.include_args;
         let include_tags = self.include_tags;

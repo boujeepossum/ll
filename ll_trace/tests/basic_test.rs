@@ -31,6 +31,12 @@ fn setup_shared() -> (Arc<TaskTree>, SharedWriter, ll_trace::FlushGuard) {
     (tt, writer, guard)
 }
 
+fn read_trace(writer: &SharedWriter, guard: &ll_trace::FlushGuard) -> serde_json::Value {
+    guard.flush();
+    let output = String::from_utf8(writer.0.lock().unwrap().clone()).unwrap();
+    serde_json::from_str(&output).unwrap()
+}
+
 #[tokio::test]
 async fn basic_trace_output() -> Result<()> {
     let (tt, writer, guard) = setup_shared();
@@ -43,14 +49,7 @@ async fn basic_trace_output() -> Result<()> {
     root.spawn_sync("child_b", |_| Ok(()))?;
     drop(root);
 
-    // Give the drain thread time to process events
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    guard.flush();
-
-    let output = String::from_utf8(writer.0.lock().unwrap().clone())?;
-
-    // Should be valid JSON
-    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+    let parsed = read_trace(&writer, &guard);
     let events = parsed["traceEvents"].as_array().unwrap();
 
     // First event is the metadata event
@@ -94,11 +93,7 @@ async fn error_task_includes_error_in_args() -> Result<()> {
     });
     drop(root);
 
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    guard.flush();
-
-    let output = String::from_utf8(writer.0.lock().unwrap().clone())?;
-    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+    let parsed = read_trace(&writer, &guard);
     let events = parsed["traceEvents"].as_array().unwrap();
 
     let failing = events.iter().find(|e| e["name"] == "failing").unwrap();
@@ -132,11 +127,7 @@ async fn no_args_when_disabled() -> Result<()> {
     })?;
     drop(root);
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    guard.flush();
-
-    let output = String::from_utf8(writer.0.lock().unwrap().clone())?;
-    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+    let parsed = read_trace(&writer, &guard);
     let events = parsed["traceEvents"].as_array().unwrap();
 
     let task = events
