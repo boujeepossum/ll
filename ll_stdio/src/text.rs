@@ -273,7 +273,8 @@ fn format_status(
                 let d = finished_at.duration_since(task_internal.started_at).ok();
                 match (d, format) {
                     (Some(d), DurationFormat::Milliseconds) => {
-                        format!("| {:>6}ms | ", d.as_millis())
+                        let ms = format_with_commas(d.as_millis() as u64);
+                        format!("| {ms:>5} ms | ")
                             .bold()
                             .dimmed()
                             .to_string()
@@ -317,6 +318,18 @@ fn format_error(task_internal: &TaskInternal) -> String {
             .collect::<Vec<String>>()
             .join("\n");
         result.push_str(&error_log);
+    }
+    result
+}
+
+fn format_with_commas(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            result.push(',');
+        }
+        result.push(ch);
     }
     result
 }
