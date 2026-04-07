@@ -1,53 +1,40 @@
+//! Reusable fixture task trees for testing ll reporters and visualizations.
+//!
+//! Provides a realistic task tree with build, deploy, test, and monitoring
+//! phases that exercise all ll features: nesting, progress bars, data,
+//! transitive data, tags, sync/async mix, detached tasks.
+
 use anyhow::Result;
-use ll::reporters::Level;
 use ll::task;
 use ll::Task;
 use rand::Rng;
-use std::sync::Arc;
 use std::time::Duration;
 
 fn sleep_ms(lo: u64, hi: u64) -> Duration {
     Duration::from_millis(rand::rng().random_range(lo..=hi))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut reporter = ll::reporters::StdioReporter::new();
-    reporter.log_task_start = true;
-    reporter.max_log_level = Level::L3;
-    ll::add_reporter(Arc::new(reporter));
-    ll::reporters::term_status::show();
-    ll::task_tree::TASK_TREE.set_force_flush(true);
-
-    let root = Task::create_new("pipeline #nostatus #l0");
-    root.data_transitive("run_id", "test-run-42");
-
-    // run all top-level phases concurrently
+/// Run the full fixture pipeline under the given root task.
+pub async fn run_pipeline(root: &Task) -> Result<()> {
     let (a, b, c, d) = tokio::join!(
-        build(&root),
-        deploy("staging", &root),
-        test_phase(&root),
-        monitoring(&root),
+        build(root),
+        deploy("staging", root),
+        test_phase(root),
+        monitoring(root),
     );
     a?;
     b?;
     c?;
     d?;
-
-    drop(root);
-    // let straggler tasks drain
-    tokio::time::sleep(Duration::from_secs(4)).await;
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Build phase: sync + async mix, progress bars, data, nested tree
-// ---------------------------------------------------------------------------
+// ── Build phase ──────────────────────────────────────────────────
+
 #[task]
 async fn build(task: &Task) -> Result<()> {
     task.data("compiler", "rustc 1.78");
 
-    // sync tasks: resolve deps
     task.spawn_sync("resolve_deps", |t| {
         std::thread::sleep(sleep_ms(200, 600));
         t.data("crates", 147);
@@ -59,7 +46,6 @@ async fn build(task: &Task) -> Result<()> {
         Ok(())
     })?;
 
-    // parallel compile crates with progress
     task.spawn("compile", |t| async move {
         let total = 48;
         for i in 0..=total {
@@ -71,7 +57,6 @@ async fn build(task: &Task) -> Result<()> {
     })
     .await?;
 
-    // link step
     task.spawn("link", |t| async move {
         t.data("target", "x86_64-unknown-linux-gnu");
         tokio::time::sleep(sleep_ms(500, 1500)).await;
@@ -82,12 +67,10 @@ async fn build(task: &Task) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Deploy phase: wide fan-out, staggered starts — demonstrates data(...)
-// ---------------------------------------------------------------------------
+// ── Deploy phase ─────────────────────────────────────────────────
+
 #[task(data(environment))]
 async fn deploy(environment: &str, task: &Task) -> Result<()> {
-    // provision hosts in parallel
     task.spawn("provision_hosts", |t| async move {
         let hosts = ["us-east-1a", "us-west-2b", "eu-west-1c", "ap-south-1a"];
         let mut handles = vec![];
@@ -103,7 +86,6 @@ async fn deploy(environment: &str, task: &Task) -> Result<()> {
                     tokio::time::sleep(sleep_ms(300, 800)).await;
                     t3.progress(2, 3);
 
-                    // nested health check
                     t3.spawn_sync("health_check", |hc| {
                         std::thread::sleep(sleep_ms(100, 400));
                         hc.data("status", "healthy");
@@ -112,7 +94,6 @@ async fn deploy(environment: &str, task: &Task) -> Result<()> {
 
                     t3.progress(3, 3);
 
-                    // one host takes longer — extra config
                     if i == 2 {
                         t3.spawn("extra_config", |ec| async move {
                             ec.data("reason", "eu compliance");
@@ -133,7 +114,6 @@ async fn deploy(environment: &str, task: &Task) -> Result<()> {
     })
     .await?;
 
-    // rolling restart
     task.spawn("rolling_restart", |t| async move {
         for shard in 0..6 {
             t.spawn(format!("shard_{shard}"), |s| async move {
@@ -153,15 +133,13 @@ async fn deploy(environment: &str, task: &Task) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Test phase: deep nesting, mixed sync/async, data, transitive data
-// ---------------------------------------------------------------------------
+// ── Test phase ───────────────────────────────────────────────────
+
 #[task(name = "test #l2")]
 async fn test_phase(task: &Task) -> Result<()> {
     task.data_transitive("test_suite", "integration");
 
     let (unit, integration, e2e) = tokio::join!(
-        // unit tests — many small sync tasks
         task.spawn("unit_tests", |t| async move {
             let modules = [
                 "parser",
@@ -186,7 +164,6 @@ async fn test_phase(task: &Task) -> Result<()> {
             }
             Ok(())
         }),
-        // integration tests — async, deeper nesting
         task.spawn("integration_tests", |t| async move {
             t.spawn("api_tests", |api| async move {
                 let endpoints = [
@@ -247,7 +224,6 @@ async fn test_phase(task: &Task) -> Result<()> {
 
             Ok(())
         }),
-        // e2e tests — long running, progress bars
         task.spawn("e2e_tests #l3", |t| async move {
             t.spawn("browser_tests", |b| async move {
                 let scenarios = [
@@ -295,12 +271,10 @@ async fn test_phase(task: &Task) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Monitoring phase: long-lived tasks, fire-and-forget children, create() tasks
-// ---------------------------------------------------------------------------
+// ── Monitoring phase ─────────────────────────────────────────────
+
 #[task]
 async fn monitoring(task: &Task) -> Result<()> {
-    // metrics collection — several create() tasks that live for a while
     task.spawn("collect_metrics", |t| async move {
         let cpu = t.create("cpu_usage");
         cpu.data("cores", 16);
@@ -309,7 +283,6 @@ async fn monitoring(task: &Task) -> Result<()> {
         let disk = t.create("disk_io");
         disk.data("devices", 4);
 
-        // simulate periodic sampling
         for i in 0..8 {
             cpu.data("sample", rand::rng().random_range(10..95));
             mem.data("used_gb", rand::rng().random_range(8..58));
@@ -325,7 +298,6 @@ async fn monitoring(task: &Task) -> Result<()> {
     })
     .await?;
 
-    // alerts — detached task that outlives parent spawn
     let t_clone = task.clone();
     tokio::spawn(async move {
         t_clone
@@ -344,7 +316,6 @@ async fn monitoring(task: &Task) -> Result<()> {
             .ok();
     });
 
-    // log aggregation — deep sync chain
     task.spawn_sync("aggregate_logs", |t| {
         t.data("sources", 12);
         std::thread::sleep(sleep_ms(200, 600));

@@ -1,0 +1,21 @@
+[package]
+name = "ll_stdio"
+version = "10.0.0"
+edition = "2018"
+authors = ["Aaron Abrams <aaron@abrams.cc>"]
+description = "Terminal reporters for ll — StdioReporter, StringReporter, TermStatus"
+license = "MIT"
+repository = "https://github.com/boujeepossum/ll"
+
+[dependencies]
+ll = { version = "10.0.0", path = "../ll" }
+anyhow = "1"
+chrono = "0.4"
+colored = "3"
+crossterm = "0.29"
+lazy_static = "1"
+strip-ansi-escapes = "0.2"
+
+[dev-dependencies]
+k9 = "0.12"
+tokio = { version = "1", features = ["full"] }

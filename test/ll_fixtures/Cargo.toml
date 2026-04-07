@@ -1,0 +1,11 @@
+[package]
+name = "ll_fixtures"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ll = { path = "../../ll" }
+anyhow = "1"
+rand = "0.9"
+tokio = { version = "1", features = ["full"] }

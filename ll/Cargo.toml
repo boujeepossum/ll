@@ -1,6 +1,6 @@
 [package]
 name = "ll"
-version = "8.1.0"
+version = "10.0.0"
 edition = "2018"
 authors = ["Aaron Abrams <aaron@abrams.cc>"]
 description = "rust logging library"
@@ -9,13 +9,9 @@ repository = "https://github.com/boujeepossum/ll"
 
 [dependencies]
 anyhow = "1"
-chrono = "0.4"
-colored = "3"
-crossterm = "0.29"
 lazy_static = "1"
-strip-ansi-escapes = "0.2"
-ll_macros = { version = "8.1.0", path = "../ll_macros" }
-tokio = { version = "1", features = ["full"] }
+ll_macros = { version = "10.0.0", path = "../ll_macros" }
+web-time = "1"
 
 [dev-dependencies]
 k9 = "0.12"

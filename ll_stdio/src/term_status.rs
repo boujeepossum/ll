@@ -1,9 +1,9 @@
-use super::Level;
-use crate::task_tree::{TaskInternal, TaskResult, TaskStatus, TaskTree, TASK_TREE};
-use crate::uniq_id::UniqID;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use crossterm::{cursor, style, terminal};
+use ll::reporters::Level;
+use ll::task_tree::{TaskInternal, TaskResult, TaskStatus, TaskTree, TASK_TREE};
+use ll::uniq_id::UniqID;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -321,7 +321,7 @@ impl TermStatusInternal {
     }
 
     fn should_print(&self, task: &TaskInternal) -> bool {
-        let level = super::utils::parse_level(task);
+        let level = ll::reporters::utils::parse_level(task);
         !task.tags.contains(NOSTATUS_TAG) && (level <= self.max_log_level)
     }
 
@@ -382,30 +382,60 @@ fn make_progress(task: &TaskInternal) -> String {
             return String::new();
         }
         let ratio = (*done as f64) / (*total as f64);
-        // Each braille cell has a left and right column, giving
-        // half-character resolution at the fill boundary.
         let filled_halves = ((ratio * (BAR_WIDTH * 2) as f64) as usize).min(BAR_WIDTH * 2);
 
         let full = filled_halves / 2;
         let half = filled_halves % 2;
         let empty = BAR_WIDTH - full - half;
 
-        // ⣿ = all 8 dots (dense fill)
-        // ⡇ = left column only (half-cell boundary)
-        // ⣀ = bottom 2 dots (subtle empty track)
-        let filled_part = "⣿".repeat(full);
-        let half_part = if half > 0 { "⡇" } else { "" };
+        // Gradient from teal → green → yellow across the filled portion.
+        // Each filled cell gets its own RGB based on position.
+        let mut bar = String::new();
+        for i in 0..full {
+            let t = if full <= 1 {
+                0.0
+            } else {
+                i as f64 / (full - 1) as f64
+            };
+            let (r, g, b) = gradient_color(t);
+            bar.push_str(&format!("{}", "⣿".truecolor(r, g, b)));
+        }
+        if half > 0 {
+            let t = full as f64 / BAR_WIDTH as f64;
+            let (r, g, b) = gradient_color(t);
+            bar.push_str(&format!("{}", "⡇".truecolor(r, g, b)));
+        }
+
+        // ⣀ = subtle empty track
         let empty_part = "⣀".repeat(empty);
 
         format!(
-            " {}{}{} {}/{} ",
-            filled_part.green(),
-            half_part.green(),
-            empty_part.bright_black(),
+            " {}{} {}/{} ",
+            bar,
+            empty_part.truecolor(60, 60, 60),
             done,
             total
         )
     } else {
         String::new()
     }
+}
+
+/// Teal (0, 200, 180) → Green (80, 220, 100) → Yellow (220, 220, 60)
+fn gradient_color(t: f64) -> (u8, u8, u8) {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        // teal → green
+        let s = t * 2.0;
+        lerp_rgb((0, 200, 180), (80, 220, 100), s)
+    } else {
+        // green → yellow
+        let s = (t - 0.5) * 2.0;
+        lerp_rgb((80, 220, 100), (220, 220, 60), s)
+    }
+}
+
+fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f64) -> (u8, u8, u8) {
+    let lerp = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t) as u8;
+    (lerp(a.0, b.0), lerp(a.1, b.1), lerp(a.2, b.2))
 }

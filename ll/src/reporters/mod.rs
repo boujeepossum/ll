@@ -1,20 +1,25 @@
 pub mod level;
-pub mod term_status;
-pub mod text;
 pub mod utils;
 
 pub use level::Level;
-pub use term_status::TermStatus;
-pub use text::StdioReporter;
-pub use text::StringReporter;
 
 pub const DONTPRINT_TAG: &str = "dontprint";
 
 use crate::task_tree::TaskInternal;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+pub enum TaskEvent {
+    Start(Arc<TaskInternal>),
+    End(Arc<TaskInternal>),
+    Progress(Arc<TaskInternal>),
+}
+
+pub type EventQueue = Arc<Mutex<Vec<TaskEvent>>>;
 
 pub trait Reporter: Send + Sync {
-    fn task_start(&self, _task: Arc<TaskInternal>) {}
-    fn task_end(&self, _task: Arc<TaskInternal>) {}
-    fn task_progress(&self, _task: Arc<TaskInternal>) {}
+    /// Called once when the reporter is registered. The queue will
+    /// receive events as tasks start/end/progress. The reporter is
+    /// responsible for draining it (background thread, timer, on-demand).
+    fn start(&self, queue: EventQueue);
 }

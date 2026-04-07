@@ -2,9 +2,11 @@
 name = "ll_test_cli"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
-ll = { path = "../ll" }
+ll = { path = "../../ll" }
+ll_stdio = { path = "../../ll_stdio" }
+ll_fixtures = { path = "../ll_fixtures" }
 anyhow = "1"
-rand = "0.9"
 tokio = { version = "1", features = ["full"] }
