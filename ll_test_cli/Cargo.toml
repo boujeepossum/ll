@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ll = { path = "../ll" }
+ll = { path = "../ll", features = ["tokio"] }
+ll_stdio = { path = "../ll_stdio" }
 anyhow = "1"
 rand = "0.9"
 tokio = { version = "1", features = ["full"] }

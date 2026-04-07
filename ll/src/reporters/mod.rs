@@ -1,12 +1,7 @@
 pub mod level;
-pub mod term_status;
-pub mod text;
 pub mod utils;
 
 pub use level::Level;
-pub use term_status::TermStatus;
-pub use text::StdioReporter;
-pub use text::StringReporter;
 
 pub const DONTPRINT_TAG: &str = "dontprint";
 

@@ -1,7 +1,9 @@
-use crate::task;
-use crate::{task_tree::TaskTree, StringReporter, Task};
 use anyhow::Result;
 use k9::*;
+use ll::task;
+use ll::task_tree::TaskTree;
+use ll::Task;
+use ll_stdio::StringReporter;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,9 +27,9 @@ async fn step_one(parent: &Task) -> Result<()> {
     Ok(())
 }
 
-// --- Edge case: fully qualified type crate::Task ---
+// --- Edge case: fully qualified type ll::Task ---
 #[task]
-async fn step_two(t: &crate::Task) -> Result<()> {
+async fn step_two(t: &ll::Task) -> Result<()> {
     t.data("from", "step_two");
     Ok(())
 }

@@ -1,0 +1,20 @@
+[package]
+name = "ll_wasm"
+version = "8.1.0"
+edition = "2018"
+authors = ["Aaron Abrams <aaron@abrams.cc>"]
+description = "WASM reporter for ll — logs task events to the JavaScript console"
+license = "MIT"
+repository = "https://github.com/boujeepossum/ll"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ll = { version = "8.1.0", path = "../ll" }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["console", "Window"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+anyhow = "1"

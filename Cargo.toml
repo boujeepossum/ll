@@ -4,5 +4,7 @@ resolver = "2"
 members = [
     "ll",
     "ll_macros",
+    "ll_stdio",
+    "ll_wasm",
     "ll_test_cli",
 ]

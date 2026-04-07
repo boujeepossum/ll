@@ -1,12 +1,10 @@
-use super::Level;
-use super::DONTPRINT_TAG;
-use crate::task_tree::{TaskInternal, TaskResult, TaskStatus};
+use crate::term_status;
 use chrono::prelude::*;
 use chrono::{DateTime, Local, Utc};
 use colored::*;
+use ll::reporters::{Level, Reporter, DONTPRINT_TAG};
+use ll::task_tree::{TaskInternal, TaskResult, TaskStatus};
 use std::sync::{Arc, Mutex, RwLock};
-
-use super::Reporter;
 
 /// Simple drain that logs everything into STDOUT
 pub struct StdioReporter {
@@ -36,6 +34,12 @@ pub enum TaskReportType {
     End,
 }
 
+impl Default for StdioReporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StdioReporter {
     pub fn new() -> Self {
         Self {
@@ -47,7 +51,7 @@ impl StdioReporter {
     }
 
     fn report(&self, task_internal: Arc<TaskInternal>, report_type: TaskReportType) {
-        let level = super::utils::parse_level(&task_internal);
+        let level = ll::reporters::utils::parse_level(&task_internal);
 
         if level <= self.max_log_level {
             if task_internal.tags.contains(DONTPRINT_TAG) {
@@ -64,11 +68,8 @@ impl StdioReporter {
 
             if self.use_stdout {
                 println!("{result}");
-            } else if super::term_status::is_active() {
-                // Buffer the line instead of writing to stderr directly.
-                // The term_status render loop will drain these and write
-                // them above the status frame on the next tick.
-                super::term_status::buffer_line(result);
+            } else if term_status::is_active() {
+                term_status::buffer_line(result);
             } else {
                 eprintln!("{result}");
             }
@@ -105,6 +106,12 @@ impl Reporter for StdioReporter {
 
 pub fn strip_ansi(s: &str) -> String {
     String::from_utf8(strip_ansi_escapes::strip(s)).expect("not a utf8 string")
+}
+
+impl Default for StringReporter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StringReporter {
