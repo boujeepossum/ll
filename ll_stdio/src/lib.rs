@@ -10,21 +10,21 @@ use ll::reporters::{EventQueue, TaskEvent};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Spawn a background thread that drains an event queue every 10ms,
-/// calling `handler` with each batch. Useful for implementing custom
-/// reporters that need a drain loop without writing the boilerplate.
+/// Spawn a background thread that continuously drains an event queue,
+/// calling `handler` with each batch every 10ms. Useful for implementing
+/// custom reporters without writing the thread boilerplate.
 ///
 /// ```ignore
 /// impl Reporter for MyReporter {
 ///     fn start(&self, queue: EventQueue) {
 ///         let this = self.clone();
-///         ll_stdio::drain_loop(queue, move |events| {
+///         ll_stdio::spawn_drain_thread(queue, move |events| {
 ///             for event in events { /* ... */ }
 ///         });
 ///     }
 /// }
 /// ```
-pub fn drain_loop(queue: EventQueue, handler: impl Fn(Vec<TaskEvent>) + Send + 'static) {
+pub fn spawn_drain_thread(queue: EventQueue, handler: impl Fn(Vec<TaskEvent>) + Send + 'static) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(10));
         let events = std::mem::take(&mut *queue.lock().unwrap());
