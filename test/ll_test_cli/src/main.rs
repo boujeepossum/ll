@@ -6,6 +6,7 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() -> Result<()> {
     ll_stdio::builder().max_log_level(Level::L3).init();
+    let _trace = ll_trace::init("trace.json");
 
     let root = Task::create_new("pipeline #nostatus #l0");
     root.data_transitive("run_id", "test-run-42");

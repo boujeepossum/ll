@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 ll = { path = "../../ll" }
 ll_stdio = { path = "../../ll_stdio" }
+ll_trace = { path = "../../ll_trace" }
 ll_fixtures = { path = "../ll_fixtures" }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }

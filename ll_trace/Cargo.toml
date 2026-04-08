@@ -1,0 +1,19 @@
+[package]
+name = "ll_trace"
+version = "10.0.0"
+edition = "2018"
+authors = ["Aaron Abrams <aaron@abrams.cc>"]
+description = "Chrome Trace Format reporter for ll — write trace JSON viewable in chrome://tracing and Perfetto"
+license = "MIT"
+repository = "https://github.com/boujeepossum/ll"
+
+[dependencies]
+ll = { version = "10.0.0", path = "../ll" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+web-time = "0.2"
+
+[dev-dependencies]
+k9 = "0.12"
+tokio = { version = "1", features = ["full"] }

@@ -10,6 +10,7 @@ The key use case is instrumenting complex async workflows (e.g. a CLI tool orche
 ll/              core engine — compiles for native + WASM
 ll_macros/       #[task] proc macro
 ll_stdio/        terminal reporters (StdioReporter, StringReporter, TermStatus)
+ll_trace/        Chrome Trace Format reporter (TraceReporter → JSON file)
 ll_wasm/         WASM reporter (ConsoleReporter → JS console)
 test/
   ll_fixtures/   reusable fixture task trees for testing
@@ -43,6 +44,9 @@ ll_stdio (separate crate):
 
 ll_wasm (separate crate):
    └── ConsoleReporter  JS console.log/error (setInterval drain)
+
+ll_trace (separate crate):
+   └── TraceReporter    Chrome Trace JSON to file (background drain thread)
 ```
 
 ### Key concepts
@@ -87,6 +91,10 @@ ll_stdio/src/
 ll_wasm/src/
   lib.rs              crate root
   console_reporter.rs ConsoleReporter (JS console via web_sys)
+
+ll_trace/src/
+  lib.rs              TraceReporter, Builder, init(), FlushGuard
+  writer.rs           Chrome Trace JSON event serialization
 
 ll_macros/src/
   lib.rs              #[task] proc macro
